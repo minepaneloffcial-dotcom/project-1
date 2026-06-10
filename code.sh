@@ -169,24 +169,24 @@ create_vm() {
     CPU_FILE="/root/cpu_$VM_ID_NAME.info"
 
     # ==========================================
-    # 1. EXPANDED OS SELECTION
+    # 1. OS SELECTION (Includes OLD Versions)
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}SELECT LINUX DISTRIBUTION${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
     echo -e " ${YELLOW}Ubuntu Server Editions:${NC}"
-    echo -e "   1) Ubuntu 22.04 LTS (Latest Stable)"
-    echo -e "   2) Ubuntu 20.04 LTS (Focal Fossa)"
-    echo -e "   3) Ubuntu 18.04 LTS (Bionic Beaver)"
+    echo -e "   1) Ubuntu 22.04 LTS"
+    echo -e "   2) Ubuntu 20.04 LTS (Old Stable)"
+    echo -e "   3) Ubuntu 18.04 LTS (Legacy)"
     echo -e ""
     echo -e " ${RED}Debian Server Editions:${NC}"
-    echo -e "   4) Debian 12 (Bookworm - New)"
-    echo -e "   5) Debian 11 (Bullseye - Stable)"
-    echo -e "   6) Debian 10 (Buster - Old Stable)"
+    echo -e "   4) Debian 12 (Newest)"
+    echo -e "   5) Debian 11 (Bullseye)"
+    echo -e "   6) Debian 10 (Buster)"
     echo -e ""
-    echo -e " ${BLUE}Security & Other:${NC}"
-    echo -e "   7) Kali Linux (Rolling)"
+    echo -e " ${BLUE}Other:${NC}"
+    echo -e "   7) Kali Linux"
     echo -e "   8) Alpine Linux"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -n " Selection [1-8]: "
@@ -219,16 +219,17 @@ create_vm() {
     if [ -z "$CORES" ]; then CORES="2"; fi
 
     # ==========================================
-    # 3. ADVANCED CPU MAKER (NESTED LOGIC)
+    # 3. CPU FAMILY SELECTION (Step 1)
     # ==========================================
     clear
     echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}SELECT CPU VENDOR ID${NC}"
+    echo -e "         ${WHITE}SELECT CPU VENDOR FAMILY${NC}"
     echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " 1) ${BLUE}GenuineIntel${NC} (Intel Corporation)"
-    echo -e " 2) ${RED}AuthenticAMD${NC} (Advanced Micro Devices)"
-    echo -e " 3) ${GREEN}Custom / Manual Entry${NC}"
-    echo -e " 4) Default (Host CPU)"
+    echo -e " 1) ${RED}AuthenticAMD${NC} (Access AMD CPU List)"
+    echo -e " 2) ${BLUE}GenuineIntel${NC} (Access Intel CPU List)"
+    echo -e " 3) ${GREEN}Custom / Manual${NC} (Type yourself)"
+    echo -e " 4) Default (Use Host CPU)"
+    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -n " Select Vendor [1-4]: "
     read -r vendor_sel
 
@@ -240,49 +241,67 @@ create_vm() {
 
     case "$vendor_sel" in
         1) 
-            # INTEL MENU
-            V_ID="GenuineIntel"
-            clear
-            echo -e "${BLUE}┌──────────────────────────────────────────────────┐${NC}"
-            echo -e "         ${WHITE}SELECT INTEL PROCESSOR MODEL${NC}"
-            echo -e "${BLUE}└──────────────────────────────────────────────────┘${NC}"
-            echo -e " 1) Intel Core i9-14900KS (6.2 GHz)"
-            echo -e " 2) Intel Xeon Platinum 8490H (Scalable)"
-            echo -e " 3) Intel Xeon Gold 6130"
-            echo -e " 4) Intel Core i7-12700K"
-            echo -n " Select Intel Model [1-4]: "
-            read -r intel_model
-            case "$intel_model" in
-                1) C_NAME="Intel(R) Core(TM) i9-14900KS"; C_MHZ="6200.000" ;;
-                2) C_NAME="Intel(R) Xeon(R) Platinum 8490H"; C_MHZ="3500.000" ;;
-                3) C_NAME="Intel(R) Xeon(R) Gold 6130 CPU @ 2.10GHz"; C_MHZ="2100.000" ;;
-                4) C_NAME="Intel(R) Core(TM) i7-12700K"; C_MHZ="5000.000" ;;
-                *) C_NAME="Intel(R) Xeon(R) CPU"; C_MHZ="2500.000" ;;
-            esac
-            ;;
-        2) 
-            # AMD MENU
+            # ==================================
+            # AMD SPECIFIC LIST (Step 2 - AMD)
+            # ==================================
             V_ID="AuthenticAMD"
             clear
             echo -e "${RED}┌──────────────────────────────────────────────────┐${NC}"
-            echo -e "         ${WHITE}SELECT AMD PROCESSOR MODEL${NC}"
+            echo -e "         ${WHITE}SELECT AMD PROCESSOR${NC}"
             echo -e "${RED}└──────────────────────────────────────────────────┘${NC}"
-            echo -e " 1) AMD EPYC 9654 (96-Core Data Center)"
-            echo -e " 2) AMD Ryzen 9 7950X3D (Gaming Flagship)"
-            echo -e " 3) AMD Ryzen Threadripper PRO 5995WX"
-            echo -e " 4) AMD EPYC 7763"
-            echo -n " Select AMD Model [1-4]: "
+            echo -e " 1) AMD EPYC 9654 (96-Core)"
+            echo -e " 2) AMD EPYC 7763 (64-Core)"
+            echo -e " 3) AMD EPYC 7742 (64-Core)"
+            echo -e " 4) AMD Ryzen 9 7950X3D (Gaming)"
+            echo -e " 5) AMD Ryzen 9 5950X"
+            echo -e " 6) AMD Ryzen Threadripper PRO 5995WX"
+            echo -e " 7) AMD Opteron 6380 (Legacy)"
+            echo -n " Select Model [1-7]: "
             read -r amd_model
             case "$amd_model" in
                 1) C_NAME="AMD EPYC 9654 96-Core Processor"; C_MHZ="3700.000" ;;
-                2) C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"; C_MHZ="5700.000" ;;
-                3) C_NAME="AMD Ryzen Threadripper PRO 5995WX"; C_MHZ="4500.000" ;;
-                4) C_NAME="AMD EPYC 7763 64-Core Processor"; C_MHZ="2450.000" ;;
+                2) C_NAME="AMD EPYC 7763 64-Core Processor"; C_MHZ="2450.000" ;;
+                3) C_NAME="AMD EPYC 7742 64-Core Processor"; C_MHZ="2250.000" ;;
+                4) C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"; C_MHZ="5700.000" ;;
+                5) C_NAME="AMD Ryzen 9 5950X 16-Core Processor"; C_MHZ="4900.000" ;;
+                6) C_NAME="AMD Ryzen Threadripper PRO 5995WX"; C_MHZ="4500.000" ;;
+                7) C_NAME="AMD Opteron(tm) Processor 6380"; C_MHZ="2500.000" ;;
                 *) C_NAME="AMD EPYC Processor"; C_MHZ="3000.000" ;;
             esac
             ;;
+        2) 
+            # ==================================
+            # INTEL SPECIFIC LIST (Step 2 - Intel)
+            # ==================================
+            V_ID="GenuineIntel"
+            clear
+            echo -e "${BLUE}┌──────────────────────────────────────────────────┐${NC}"
+            echo -e "         ${WHITE}SELECT INTEL PROCESSOR${NC}"
+            echo -e "${BLUE}└──────────────────────────────────────────────────┘${NC}"
+            echo -e " 1) Intel Core i9-14900KS (6.2 GHz)"
+            echo -e " 2) Intel Core i9-13900K"
+            echo -e " 3) Intel Xeon Platinum 8490H"
+            echo -e " 4) Intel Xeon Gold 6130"
+            echo -e " 5) Intel Xeon E5-2699 v4"
+            echo -e " 6) Intel Core i7-12700K"
+            echo -e " 7) Intel Core i5-12400F"
+            echo -n " Select Model [1-7]: "
+            read -r intel_model
+            case "$intel_model" in
+                1) C_NAME="Intel(R) Core(TM) i9-14900KS"; C_MHZ="6200.000" ;;
+                2) C_NAME="Intel(R) Core(TM) i9-13900K"; C_MHZ="5800.000" ;;
+                3) C_NAME="Intel(R) Xeon(R) Platinum 8490H"; C_MHZ="3500.000" ;;
+                4) C_NAME="Intel(R) Xeon(R) Gold 6130 CPU @ 2.10GHz"; C_MHZ="2100.000" ;;
+                5) C_NAME="Intel(R) Xeon(R) CPU E5-2699 v4 @ 2.20GHz"; C_MHZ="2200.000" ;;
+                6) C_NAME="Intel(R) Core(TM) i7-12700K"; C_MHZ="5000.000" ;;
+                7) C_NAME="Intel(R) Core(TM) i5-12400F"; C_MHZ="4400.000" ;;
+                *) C_NAME="Intel(R) Xeon(R) CPU"; C_MHZ="2500.000" ;;
+            esac
+            ;;
         3)
-            # CUSTOM MANUAL ENTRY
+            # ==================================
+            # CUSTOM MAKER (Step 2 - Custom)
+            # ==================================
             clear
             echo -e "${GREEN}┌──────────────────────────────────────────────────┐${NC}"
             echo -e "         ${WHITE}CUSTOM CPU BUILDER${NC}"
