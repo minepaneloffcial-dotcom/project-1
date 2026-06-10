@@ -39,7 +39,7 @@ echo ""
 #    LICENSE VALIDATION & SYSTEM DATA SAVER
 # ==================================================
 # FIX: Updated URL to new MinePanel path (Cleaned 'refs/heads' for Raw compatibility)
-LICENSE_SERVER_URL="https://githubusercontent.com"
+LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
 # 1. Check if we have a saved key
