@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==================================================
-#          COLOR & SMOOTH ANIMATION DEFINITIONS
+#       COLORS & UI CONSTANTS
 # ==================================================
 NC='\033[0m' 
 RED='\033[1;31m'
@@ -12,361 +12,283 @@ PURPLE='\033[1;35m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 
-animate_text() {
-    local text="$1"
-    local color="$2"
-    local delay=0.02
-    echo -ne "$color"
-    for ((i=0; i<${#text}; i++)); do
-        echo -n "${text:$i:1}"
-        sleep $delay
-    done
-    echo -e "$NC"
-}
-
-clear
-
 # ==================================================
-#          PREMIUM ANIMATED INTRO BANNER
+#       LICENSE & AUTHENTICATION
 # ==================================================
-echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
-animate_text "   ⚡ Welcome To Premium Vm maker NextGen ⚡" "$CYAN"
-animate_text "   ⚡ Crafted by iTzTasin69 & HackerTeam ⚡" "$GREEN"
-echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
-echo ""
-
-# ==================================================
-#    LICENSE VALIDATION & SYSTEM DATA SAVER
-# ==================================================
-# FIX: Updated URL to new MinePanel path (Cleaned 'refs/heads' for Raw compatibility)
-LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
+# Fixed: Using the raw link you provided and adding a timeout check
+LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/main/license.key"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
-# 1. Check if we have a saved key
-if [ -f "$LOCAL_LICENSE_FILE" ]; then
-    USER_KEY=$(cat "$LOCAL_LICENSE_FILE" | tr -d '[:space:]')
-    echo -e " ${GREEN}✔${NC} Local license index detected safely."
-    echo -e " ${BLUE}✦${NC} Handshaking key profile: $USER_KEY..."
-    sleep 1
-else
-    echo -e " ${YELLOW}⚠${NC} Host environment unlicenced."
-    echo -n " Enter Deployment License Key: "
-    read -r USER_KEY
+check_license() {
+    clear
+    echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "   ${CYAN}⚡  PREMIUM VM MAKER: MANAGER EDITION  ⚡${NC}"
+    echo -e "   ${WHITE}   Engineered by iTzTasin69 & HackerTeam${NC}"
+    echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
+    
+    # 1. Get/Prompt Key
+    if [ -f "$LOCAL_LICENSE_FILE" ]; then
+        USER_KEY=$(cat "$LOCAL_LICENSE_FILE" | tr -d '[:space:]')
+        echo -e " ${BLUE}∞${NC} Verifying stored license..."
+    else
+        echo -e " ${YELLOW}⚠${NC} License key required."
+        echo -n " Enter Key: "
+        read -r USER_KEY
+        if [ -z "$USER_KEY" ]; then echo -e "${RED}✘ Key cannot be empty.${NC}"; exit 1; fi
+    fi
 
-    if [ -z "$USER_KEY" ]; then
-        echo -e " ${RED}✘ Error: License key entry cannot be null!${NC}"
+    # 2. Validate with GitHub
+    VALID_DATA=$(curl -s --max-time 10 "$LICENSE_SERVER_URL")
+    
+    if [ -z "$VALID_DATA" ]; then
+        echo -e " ${RED}✘ Error: Could not connect to license server.${NC}"
+        echo -e " ${YELLOW}  (Check internet or GitHub raw link validity)${NC}"
         exit 1
     fi
-fi
 
-# 2. Fetch the database from GitHub
-VALID_DATA=$(curl -s -L --connect-timeout 10 "$LICENSE_SERVER_URL")
-
-# 3. Validation Logic
-if [ -z "$VALID_DATA" ]; then
-    echo -e " ${RED}✘ Gateway Timeout: Unable to query authentication node.${NC}"
-    echo -e " ${YELLOW}Check if the URL exists: $LICENSE_SERVER_URL${NC}"
-    exit 1
-fi
-
-# Check if the key exists in the fetched file
-USER_ROW=$(echo "$VALID_DATA" | grep -w "^$USER_KEY" | head -n 1)
-
-if [ -z "$USER_ROW" ]; then
-    echo -e "${RED}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "  ${RED}✘ SECURITY NOTICE: KEY INVALID OR NOT FOUND${NC}"
-    echo -e "  Contact support to activate key: $USER_KEY"
-    echo -e "${RED}└──────────────────────────────────────────────────┘${NC}"
-    rm -f "$LOCAL_LICENSE_FILE"
-    exit 1
-fi
-
-# Parse Data (Format: KEY EXPIRY MAX_VMS)
-EXPIRY_DATE=$(echo "$USER_ROW" | awk '{print $2}')
-MAX_ALLOWED_VMS=$(echo "$USER_ROW" | awk '{print $3}')
-
-# Set Defaults if columns missing
-if [ -z "$EXPIRY_DATE" ]; then EXPIRY_DATE="2030-01-01"; fi
-if [ -z "$MAX_ALLOWED_VMS" ]; then MAX_ALLOWED_VMS=1; fi
-
-# Check Expiration
-CURRENT_SECS=$(date +%s)
-EXPIRY_SECS=$(date -d "$EXPIRY_DATE" +%s 2>/dev/null)
-
-if [ -z "$EXPIRY_SECS" ]; then
-    EXPIRY_SECS=$((CURRENT_SECS + 86400))
-fi
-
-if [ "$CURRENT_SECS" -gt "$EXPIRY_SECS" ]; then
-    echo -e "${RED}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "  ${RED}✘ TERM EXPIRED: This machine index ended on $EXPIRY_DATE${NC}"
-    echo -e "${RED}└──────────────────────────────────────────────────┘${NC}"
-    exit 1
-fi
-
-# Save valid key
-echo "$USER_KEY" > "$LOCAL_LICENSE_FILE"
-
-echo -e "${GREEN}┌──────────────────────────────────────────────────┐${NC}"
-echo -e "  ${GREEN}✔ CONTAINER MANAGEMENT NODE ONLINE${NC}"
-echo -e "  ${WHITE}• Expiration Lease:${NC} $EXPIRY_DATE"
-echo -e "  ${WHITE}• Multi-Core Slots:${NC} $MAX_ALLOWED_VMS"
-echo -e "${GREEN}└──────────────────────────────────────────────────┘${NC}"
-sleep 1.2
+    # 3. Match Key
+    USER_ROW=$(echo "$VALID_DATA" | grep -w "^$USER_KEY")
+    
+    if [ -z "$USER_ROW" ]; then
+        echo -e "${RED}✘ License Invalid or Expired.${NC}"
+        rm -f "$LOCAL_LICENSE_FILE"
+        exit 1
+    fi
+    
+    echo "$USER_KEY" > "$LOCAL_LICENSE_FILE"
+    
+    # Parse Limits
+    EXPIRY_DATE=$(echo "$USER_ROW" | awk '{print $2}')
+    MAX_VMS=$(echo "$USER_ROW" | awk '{print $3}')
+    if [ -z "$MAX_VMS" ]; then MAX_VMS=1; fi
+    
+    echo -e " ${GREEN}✔ Access Granted.${NC} (Limit: $MAX_VMS VMs)"
+    sleep 1
+}
 
 # ==================================================
-#       MULTI-VM MANAGER ENGINE INTERFACE
+#       HELPER FUNCTIONS
 # ==================================================
-clear
-echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-echo -e "         ${WHITE}TASIN PRO MULTI-VM ENGINE MONITOR${NC}       "
-echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-echo -e " Active Hypervisor Environments:"
-echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-ACTIVE_VMS=$(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
 
-if [ -z "$ACTIVE_VMS" ]; then
-    echo -e "  ${YELLOW}[⚡ Ready - No virtualization instances allocated]${NC}"
-    TOTAL_VMS=0
-else
-    echo -e "${GREEN}$ACTIVE_VMS${NC}" | sed 's/^/  • /'
-    TOTAL_VMS=$(echo "$ACTIVE_VMS" | wc -l)
-fi
-echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-echo -e " Cluster Workload: ${CYAN}$TOTAL_VMS${NC} / ${PURPLE}$MAX_ALLOWED_VMS${NC} Allowed Nodes"
-echo -e "${CYAN}────────────────────────────────────────────────────${NC}"
-echo -e "  1) 🚀 Provision a High-Perf Virtual Instance"
-echo -e "  2) 🔌 Boot & SSH-Bridge to Existing VM"
-echo -e "  3) 🛑 Soft-Shutdown Running Cluster Instance"
-echo -e "  4) 💣 Purge & Wipe a Virtual Instance Completely"
-echo -e "  5) 🚪 Close Console Panel"
-echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-echo -n " Select Action Vector [1-5]: "
-read -r ENGINE_CHOICE
+# Get status color for list
+get_status() {
+    if [ "$(docker inspect -f '{{.State.Running}}' $1 2>/dev/null)" == "true" ]; then
+        echo -e "${GREEN}● RUNNING${NC}"
+    else
+        echo -e "${RED}● STOPPED${NC}"
+    fi
+}
 
-case "$ENGINE_CHOICE" in
-    1)
-        if [ "$TOTAL_VMS" -ge "$MAX_ALLOWED_VMS" ]; then
-            echo -e " ${RED}✘ QUOTA EXHAUSTED: Multi-Node slots full ($MAX_ALLOWED_VMS).${NC}"
-            exit 1
-        fi
-        
-        echo ""
-        echo -n " Provide Alphanumeric Label for Instance (e.g., core-db, web-01): "
-        read -r UNIQUE_INPUT
-        VM_ID_NAME=$(echo "$UNIQUE_INPUT" | tr -cd 'A-Za-z0-9_-')
-        
-        if [ -z "$VM_ID_NAME" ]; then
-            echo -e " ${RED}✘ Format Fault: ID descriptor field cannot remain blank.${NC}"
-            exit 1
-        fi
-        
-        VM_NAME="tasin-vm-$VM_ID_NAME"
-        DATA_DIR="/root/docker_data_$VM_ID_NAME"
-        
+# ==================================================
+#       MAIN MENUS
+# ==================================================
+
+manage_vm_menu() {
+    local vm_name=$1
+    while true; do
         clear
         echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "         ${WHITE}SELECT VIRTUAL OPERATING SYSTEM SYSTEM${NC}   "
+        echo -e "    MANAGING: ${WHITE}$vm_name${NC}"
         echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-        echo -e " ${WHITE}▶ UBUNTU ARCHITECTURE:${NC}"
-        echo -e "   1) ubuntu:latest      2) ubuntu:24.04"
-        echo -e "   3) ubuntu:22.04      4) ubuntu:20.04"
-        echo -e " ${WHITE}▶ DEBIAN ARCHITECTURE:${NC}"
-        echo -e "   5) debian:latest      6) debian:13"
-        echo -e "   7) debian:12          8) debian:11"
-        echo -e " ${WHITE}▶ CYBER SECURITY LAB:${NC}"
-        echo -e "   9) ${RED}kali-linux-rolling (Full Pentest/Flooding Pack)${NC}"
+        echo -e " Status: $(get_status $vm_name)"
         echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-        echo -n " Select target OS platform [1-9]: "
-        read -r OS_CHOICE
-        
-        case "$OS_CHOICE" in
-            1) SELECTED_IMAGE="ubuntu:latest" ;;
-            2) SELECTED_IMAGE="ubuntu:24.04" ;;
-            3) SELECTED_IMAGE="ubuntu:22.04" ;;
-            4) SELECTED_IMAGE="ubuntu:20.04" ;;
-            5) SELECTED_IMAGE="debian:latest" ;;
-            6) SELECTED_IMAGE="debian:13" ;;
-            7) SELECTED_IMAGE="debian:12" ;;
-            8) SELECTED_IMAGE="debian:11" ;;
-            9) SELECTED_IMAGE="kalilinux/kali-rolling:latest" ;;
-            *) 
-               echo -e " ${YELLOW}⚠ Invalid choice. Layering standard ubuntu:22.04 LTS.${NC}"
-               SELECTED_IMAGE="ubuntu:22.04" 
-               ;;
+        echo -e "  1) ${GREEN}⚡ Connect / Boot (SSH Shell)${NC}"
+        echo -e "  2) ${YELLOW}↺  Reboot Container${NC}"
+        echo -e "  3) ${WHITE}■  Stop Server${NC}"
+        echo -e "  4) ${WHITE}▶  Start Server${NC}"
+        echo -e "  5) ${RED}♻  Reinstall / Change OS (Wipe Data)${NC}"
+        echo -e "  6) ${RED}X  Delete VM${NC}"
+        echo -e "  0) ⬅  Back to List"
+        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+        echo -n " Select Option: "
+        read -r action
+
+        case "$action" in
+            1)
+                # FIX: Ensure container is running before connecting
+                if [ "$(docker inspect -f '{{.State.Running}}' $vm_name)" == "false" ]; then
+                    echo -e " ${YELLOW}Starting VM first...${NC}"
+                    docker start $vm_name >/dev/null 2>&1
+                fi
+                clear
+                echo -e "${GREEN}Connecting to $vm_name... (Type 'exit' to disconnect)${NC}"
+                # FIX: Use exec instead of attach so container stays alive after exit
+                docker exec -it $vm_name /bin/bash
+                ;;
+            2)
+                docker restart $vm_name
+                echo -e " ${GREEN}✔ Rebooted.${NC}"
+                sleep 1
+                ;;
+            3)
+                docker stop $vm_name
+                echo -e " ${RED}✔ Stopped.${NC}"
+                sleep 1
+                ;;
+            4)
+                docker start $vm_name
+                echo -e " ${GREEN}✔ Started.${NC}"
+                sleep 1
+                ;;
+            5)
+                echo -e " ${RED}⚠ WARNING: This will DELETE all data in $vm_name!${NC}"
+                echo -n " Are you sure? (y/n): "
+                read -r confirm
+                if [ "$confirm" == "y" ]; then
+                    docker rm -f $vm_name
+                    rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
+                    echo -e " ${GREEN}✔ VM Wiped.${NC} Sending to creation menu..."
+                    sleep 2
+                    create_vm "${vm_name#tasin-vm-}" # Reuse ID
+                    return
+                fi
+                ;;
+            6)
+                echo -n " Confirm Deletion (y/n): "
+                read -r confirm
+                if [ "$confirm" == "y" ]; then
+                    docker rm -f $vm_name
+                    rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
+                    echo -e " ${GREEN}✔ Deleted.${NC}"
+                    sleep 1
+                    return
+                fi
+                ;;
+            0) return ;;
+            *) ;;
         esac
-        ;;
-        
-    2)
-        if [ -z "$ACTIVE_VMS" ]; then echo "No host VM containers compiled."; exit 0; fi
-        echo -n " Provide full name of Target Instance: "
-        read -r VM_NAME
-        clear
-        echo -e " ${GREEN}▲${NC} Initializing Engine Pipeline: $VM_NAME..."
-        docker start "$VM_NAME" >/dev/null 2>&1
-        echo -e " ${GREEN}✔ Bridge Connected.${NC} Accessing TTY Bash Shell..."
-        sleep 0.5
-        docker exec -it "$VM_NAME" /bin/bash
-        exit 0
-        ;;
-        
-    3)
-        if [ -z "$ACTIVE_VMS" ]; then echo "Hypervisor contains zero running layers."; exit 0; fi
-        echo -n " Target Engine ID to Stop: "
-        read -r VM_NAME
-        docker stop "$VM_NAME" && echo -e " ${GREEN}✔ Core cycle suspended.${NC}"
-        exit 0
-        ;;
-        
-    4)
-        if [ -z "$ACTIVE_VMS" ]; then echo "No persistent blocks found."; exit 0; fi
-        echo -n " Target Engine ID to DESTROY: "
-        read -r VM_NAME
-        echo -e " ${RED}⚠ WARNING: Action is destructive. Data within the node will be dropped.${NC}"
-        echo -n " Proceed with block erasure? (y/n): "
-        read -r CONFIRM
-        if [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ]; then
-            docker rm -f "$VM_NAME" >/dev/null 2>&1
-            SUFFIX_DIR=$(echo "$VM_NAME" | sed 's/tasin-vm-//')
-            rm -rf "/root/docker_data_$SUFFIX_DIR"
-            echo -e " ${GREEN}✔ Block deleted safely. Sandbox clean.${NC}"
+    done
+}
+
+create_vm() {
+    # If ID passed as arg (reinstall mode), use it. Else ask.
+    if [ -n "$1" ]; then
+        VM_ID_NAME=$1
+    else
+        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+        echo -e "         ${WHITE}CREATE NEW INSTANCE${NC}"
+        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+        echo -n " Enter Name (e.g. web1, db2): "
+        read -r INPUT_NAME
+        VM_ID_NAME=$(echo "$INPUT_NAME" | tr -cd 'A-Za-z0-9_-')
+    fi
+
+    VM_NAME="tasin-vm-$VM_ID_NAME"
+    DATA_DIR="/root/docker_data_$VM_ID_NAME"
+
+    # OS Selection
+    clear
+    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}SELECT OPERATING SYSTEM${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " 1) Ubuntu 22.04 (Recommended)"
+    echo -e " 2) Ubuntu 20.04"
+    echo -e " 3) Debian 11"
+    echo -e " 4) Debian 12"
+    echo -e " 5) Kali Linux (Rolling)"
+    echo -n " Selection [1-5]: "
+    read -r os_sel
+    case "$os_sel" in
+        1) IMG="ubuntu:22.04" ;;
+        2) IMG="ubuntu:20.04" ;;
+        3) IMG="debian:11" ;;
+        4) IMG="debian:12" ;;
+        5) IMG="kalilinux/kali-rolling:latest" ;;
+        *) IMG="ubuntu:22.04" ;;
+    esac
+
+    # Specs
+    clear
+    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}CONFIGURE SPECS${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo -n " RAM Limit (e.g. 1g, 4g): "
+    read -r RAM
+    if [ -z "$RAM" ]; then RAM="2g"; fi
+    
+    echo -n " CPU Cores (e.g. 1, 4): "
+    read -r CORES
+    if [ -z "$CORES" ]; then CORES="2"; fi
+
+    mkdir -p "$DATA_DIR"
+    
+    echo -e " ${BLUE}▶${NC} Deploying container..."
+    
+    # FIX: Using -d (detached) and -t (tty) and --restart always
+    # This prevents the "Container not running" error
+    docker run -dt \
+        --name "$VM_NAME" \
+        --hostname "$VM_ID_NAME" \
+        --cpus="$CORES" \
+        --memory="$RAM" \
+        --restart unless-stopped \
+        -v "$DATA_DIR":/root:rw \
+        "$IMG" /bin/bash >/dev/null
+    
+    if [ $? -eq 0 ]; then
+        echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
+        echo -e " Redirecting to manager..."
+        sleep 2
+        manage_vm_menu "$VM_NAME"
+    else
+        echo -e " ${RED}✘ Error creating VM.${NC}"
+        sleep 3
+    fi
+}
+
+# ==================================================
+#       MAIN LOOP
+# ==================================================
+check_license
+
+while true; do
+    clear
+    # Fetch Active VMs
+    mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
+    
+    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "      ${WHITE}TASIN VPS CONTROL PANEL${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    
+    if [ ${#VMS[@]} -eq 0 ]; then
+        echo -e "  ${YELLOW}(No VMs created yet)${NC}"
+    else
+        # Loop and list with numbers
+        i=1
+        for vm in "${VMS[@]}"; do
+            STATE=$(get_status "$vm")
+            # Clean Name display
+            DISPLAY_NAME=${vm#tasin-vm-}
+            echo -e "  ${WHITE}[$i]${NC} $DISPLAY_NAME  $STATE"
+            ((i++))
+        done
+    fi
+    
+    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN}[N]${NC} Create New VM"
+    echo -e "  ${RED}[E]${NC} Exit Panel"
+    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+    echo -n " Enter Number to Manage or [N]: "
+    read -r CHOICE
+    
+    if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
+        # Check limit
+        if [ ${#VMS[@]} -ge "$MAX_VMS" ]; then
+             echo -e " ${RED}✘ License Limit Reached ($MAX_VMS).${NC}"
+             sleep 2
+        else
+             create_vm
         fi
+    elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
+        clear
         exit 0
-        ;;
-    *)
-        echo "Exiting..."
-        exit 0
-        ;;
-esac
-
-# ==================================================
-#       INTERACTIVE HARDWARE CONFIGURATION
-# ==================================================
-clear
-echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-echo -e "         ${WHITE}SELECT PROCESSOR EMBED VENDOR${NC}             "
-echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-echo -e "  1) GenuineIntel"
-echo -e "  2) AuthenticAMD"
-echo -e "  3) Custom Vendor Spoof Mapping"
-echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-echo -n " Apply Vector Selection [1-3]: "
-read -r VENDOR_CHOICE
-
-case "$VENDOR_CHOICE" in
-    1) V_ID="GenuineIntel" ;;
-    2) V_ID="AuthenticAMD" ;;
-    3) 
-       echo -n " Input Custom Hardware Vendor String: "
-       read -r V_ID
-       ;;
-    *) V_ID="GenuineIntel" ;;
-esac
-
-clear
-echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-echo -e "         ${WHITE}SELECT CPU PROFILES & PERFORMANCE LAYER${NC}   "
-echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-echo -e "  1) AMD Ryzen 9 7950X3D @ 5.7GHz"
-echo -e "  2) Intel Core i9-14900KS @ 6.2GHz"
-echo -e "  3) AMD EPYC 9654 Enterprise Block"
-echo -e "  4) Intel Xeon Platinum Hybrid Cluster"
-echo -e "  5) Custom Manual Processor Injection"
-echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-echo -n " Select Microarchitecture Profile [1-5]: "
-read -r CPU_CHOICE
-
-case "$CPU_CHOICE" in
-    1) C_NAME="AMD Ryzen 9 7950X3D @ 5.7GHz" ;;
-    2) C_NAME="Intel Core i9-14900KS @ 6.2GHz" ;;
-    3) C_NAME="AMD EPYC 9654 @ 3.7GHz" ;;
-    4) C_NAME="Intel Xeon Platinum 8490H @ 3.5GHz" ;;
-    5) 
-       echo -n " Type Dedicated Model Name String: "
-       read -r C_NAME
-       ;;
-    *) C_NAME="Intel Core i9-14900KS @ 6.2GHz" ;;
-esac
-
-clear
-echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-echo -e "         ${WHITE}CORE TUNING: MHZ SPEED & LOGICAL THREADS${NC} "
-echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-echo -n " [!] Assign Engine Frequency (e.g., 6200.000): "
-read -r C_MHZ
-if [ -z "$C_MHZ" ]; then C_MHZ="5700.000"; fi
-
-echo -n " [!] Set Maximum CPU Core Allocation (e.g., 2, 4): "
-read -r CPU_CORES
-if [ -z "$CPU_CORES" ]; then CPU_CORES="2"; fi
-
-# ==================================================
-#    DEDICATED ADVANCED RESOURCE CONTROLLERS (RAM/DISK)
-# ==================================================
-clear
-echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-echo -e "         ${WHITE}SPECIFY MEMORY & METRIC STORAGE THRESHOLDS${NC}"
-echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-echo -e " Define RAM parameters using size flags (e.g., 512m, 2g, 4g)."
-echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-echo -n " Assign Maximum Safe Memory Boundary: "
-read -r RAM_LIMIT
-if [ -z "$RAM_LIMIT" ]; then RAM_LIMIT="2g"; fi
-
-echo -n " Assign Swappable Cache Memory Limit (e.g., 0, 1g): "
-read -r SWAP_LIMIT
-if [ -z "$SWAP_LIMIT" ]; then SWAP_LIMIT="0"; fi
-
-echo -n " Constrain Disk Write Throughput Limit (MB/s, e.g., 50m): "
-read -r IO_WRITE
-if [ -z "$IO_WRITE" ]; then IO_WRITE="100m"; fi
-
-# ==================================================
-#          CORE CONFIGURATION & CONTAINER BUILD
-# ==================================================
-if [ ! -d "$DATA_DIR" ]; then mkdir -p "$DATA_DIR"; fi
-
-# Fixed multi-line split syntax for sed operation
-sed -e "s/^vendor_id.*/vendor_id\t: $V_ID/" \
-    -e "s/^model name.*/model name\t: $C_NAME/" \
-    -e "s/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/" \
-    /proc/cpuinfo > /root/cpu.vm
-
-clear
-echo -e "${GREEN}┌──────────────────────────────────────────────────┐${NC}"
-echo -e "         ${WHITE}PROVISIONING ARCHITECTURE BY TASIN${NC}        "
-echo -e "${GREEN}└──────────────────────────────────────────────────┘${NC}"
-echo -e "  🚀 Deploying Node ID : ${CYAN}$VM_NAME${NC}"
-echo -e "  📦 Selected OS Image : ${YELLOW}$SELECTED_IMAGE${NC}"
-echo -e "  🧠 CPU Core Allocation: ${WHITE}$CPU_CORES Cores @ $C_MHZ MHz${NC}"
-echo -e "  📟 Memory Allocation : ${WHITE}$RAM_LIMIT (Swap: $SWAP_LIMIT)${NC}"
-echo -e "  💾 Storage Path IO   : ${WHITE}$DATA_DIR ($IO_WRITE Read/Write Cap)${NC}"
-echo -e "${GREEN}────────────────────────────────────────────────────${NC}"
-echo -e "  System deployment starting immediately..."
-sleep 2
-
-# Docker container initialization execution 
-if [ -c /dev/kvm ]; then
-    docker run -it \
-      --name "$VM_NAME" \
-      --hostname "$VM_ID_NAME" \
-      --cpus="$CPU_CORES" \
-      --memory="$RAM_LIMIT" \
-      --memory-swap="$SWAP_LIMIT" \
-      --device-write-bps /dev/sda:"$IO_WRITE" \
-      --device /dev/kvm \
-      -v /root/cpu.vm:/proc/cpuinfo:ro \
-      -v "$DATA_DIR":/root:rw \
-      "$SELECTED_IMAGE" /bin/bash
-else
-    docker run -it \
-      --name "$VM_NAME" \
-      --hostname "$VM_ID_NAME" \
-      --cpus="$CPU_CORES" \
-      --memory="$RAM_LIMIT" \
-      --memory-swap="$SWAP_LIMIT" \
-      --device-write-bps /dev/sda:"$IO_WRITE" \
-      -v /root/cpu.vm:/proc/cpuinfo:ro \
-      -v "$DATA_DIR":/root:rw \
-      "$SELECTED_IMAGE" /bin/bash
-fi
+    elif [[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -le "${#VMS[@]}" ] && [ "$CHOICE" -gt 0 ]; then
+        # Convert 1-based index to 0-based array index
+        INDEX=$((CHOICE-1))
+        SELECTED_VM=${VMS[$INDEX]}
+        manage_vm_menu "$SELECTED_VM"
+    else
+        echo -e " ${RED}Invalid Selection.${NC}"
+        sleep 1
+    fi
+done
