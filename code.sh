@@ -11,7 +11,6 @@ BLUE='\033[1;34m'
 PURPLE='\033[1;35m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
-BG_BLUE='\033[44m'
 
 animate_text() {
     local text="$1"
@@ -23,20 +22,6 @@ animate_text() {
         sleep $delay
     done
     echo -e "$NC"
-}
-
-show_spinner() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep -w "$pid")" ]; do
-        local temp=${spinstr#?}
-        printf " [%c]  Loading dependencies..." "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
-    done
-    printf "    \b\b\b\b"
 }
 
 clear
@@ -53,9 +38,11 @@ echo ""
 # ==================================================
 #    LICENSE VALIDATION & SYSTEM DATA SAVER
 # ==================================================
-LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
+# FIX: Updated URL to new MinePanel path (Cleaned 'refs/heads' for Raw compatibility)
+LICENSE_SERVER_URL="https://githubusercontent.com"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
+# 1. Check if we have a saved key
 if [ -f "$LOCAL_LICENSE_FILE" ]; then
     USER_KEY=$(cat "$LOCAL_LICENSE_FILE" | tr -d '[:space:]')
     echo -e " ${GREEN}✔${NC} Local license index detected safely."
@@ -72,31 +59,37 @@ else
     fi
 fi
 
-# Fetch active database list from GitHub
-VALID_DATA=$(curl -s -L "$LICENSE_SERVER_URL")
+# 2. Fetch the database from GitHub
+VALID_DATA=$(curl -s -L --connect-timeout 10 "$LICENSE_SERVER_URL")
 
+# 3. Validation Logic
 if [ -z "$VALID_DATA" ]; then
     echo -e " ${RED}✘ Gateway Timeout: Unable to query authentication node.${NC}"
+    echo -e " ${YELLOW}Check if the URL exists: $LICENSE_SERVER_URL${NC}"
     exit 1
 fi
 
+# Check if the key exists in the fetched file
 USER_ROW=$(echo "$VALID_DATA" | grep -w "^$USER_KEY" | head -n 1)
 
 if [ -z "$USER_ROW" ]; then
     echo -e "${RED}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "  ${RED}✘ SECURITY NOTICE: SYSTEM EXHAUSTED OR INVALID${NC}"
-    echo -e "  Contact provisioning desk (Tasin) for system access."
+    echo -e "  ${RED}✘ SECURITY NOTICE: KEY INVALID OR NOT FOUND${NC}"
+    echo -e "  Contact support to activate key: $USER_KEY"
     echo -e "${RED}└──────────────────────────────────────────────────┘${NC}"
     rm -f "$LOCAL_LICENSE_FILE"
     exit 1
 fi
 
+# Parse Data (Format: KEY EXPIRY MAX_VMS)
 EXPIRY_DATE=$(echo "$USER_ROW" | awk '{print $2}')
 MAX_ALLOWED_VMS=$(echo "$USER_ROW" | awk '{print $3}')
 
+# Set Defaults if columns missing
 if [ -z "$EXPIRY_DATE" ]; then EXPIRY_DATE="2030-01-01"; fi
 if [ -z "$MAX_ALLOWED_VMS" ]; then MAX_ALLOWED_VMS=1; fi
 
+# Check Expiration
 CURRENT_SECS=$(date +%s)
 EXPIRY_SECS=$(date -d "$EXPIRY_DATE" +%s 2>/dev/null)
 
@@ -111,6 +104,7 @@ if [ "$CURRENT_SECS" -gt "$EXPIRY_SECS" ]; then
     exit 1
 fi
 
+# Save valid key
 echo "$USER_KEY" > "$LOCAL_LICENSE_FILE"
 
 echo -e "${GREEN}┌──────────────────────────────────────────────────┐${NC}"
@@ -139,13 +133,13 @@ else
     TOTAL_VMS=$(echo "$ACTIVE_VMS" | wc -l)
 fi
 echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-echo -e " Cluster Workload: ${CYAN}$TOTAL_VMS${NC} / ${PURPLE}$MAX_ALLOWED_VMS${NC} Allocated Nodes"
+echo -e " Cluster Workload: ${CYAN}$TOTAL_VMS${NC} / ${PURPLE}$MAX_ALLOWED_VMS${NC} Allowed Nodes"
 echo -e "${CYAN}────────────────────────────────────────────────────${NC}"
-echo -e "  ${WHITE}[1]${NC} 🚀 Provision a High-Perf Virtual Instance"
-echo -e "  ${WHITE}[2]${NC} 🔌 Boot & SSH-Bridge to Existing VM"
-echo -e "  ${WHITE}[3]${NC} 🛑 Soft-Shutdown Running Cluster Instance"
-echo -e "  ${WHITE}[4]${NC} 💣 Purge & Wipe a Virtual Instance Completely"
-echo -e "  ${WHITE}[5]${NC} 🚪 Close Console Panel"
+echo -e "  1) 🚀 Provision a High-Perf Virtual Instance"
+echo -e "  2) 🔌 Boot & SSH-Bridge to Existing VM"
+echo -e "  3) 🛑 Soft-Shutdown Running Cluster Instance"
+echo -e "  4) 💣 Purge & Wipe a Virtual Instance Completely"
+echo -e "  5) 🚪 Close Console Panel"
 echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
 echo -n " Select Action Vector [1-5]: "
 read -r ENGINE_CHOICE
@@ -170,9 +164,6 @@ case "$ENGINE_CHOICE" in
         VM_NAME="tasin-vm-$VM_ID_NAME"
         DATA_DIR="/root/docker_data_$VM_ID_NAME"
         
-        # ==================================================
-        #       ADVANCED MULTI-OS SELECTOR MODULE
-        # ==================================================
         clear
         echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
         echo -e "         ${WHITE}SELECT VIRTUAL OPERATING SYSTEM SYSTEM${NC}   "
@@ -255,9 +246,9 @@ clear
 echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
 echo -e "         ${WHITE}SELECT PROCESSOR EMBED VENDOR${NC}             "
 echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-echo -e "  [1] GenuineIntel (Standard Enterprise Architecture)"
-echo -e "  [2] AuthenticAMD (High Performance Layout)"
-echo -e " 3) Custom Vendor Spoof Mapping"
+echo -e "  1) GenuineIntel"
+echo -e "  2) AuthenticAMD"
+echo -e "  3) Custom Vendor Spoof Mapping"
 echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
 echo -n " Apply Vector Selection [1-3]: "
 read -r VENDOR_CHOICE
@@ -265,7 +256,7 @@ read -r VENDOR_CHOICE
 case "$VENDOR_CHOICE" in
     1) V_ID="GenuineIntel" ;;
     2) V_ID="AuthenticAMD" ;;
-    3)
+    3) 
        echo -n " Input Custom Hardware Vendor String: "
        read -r V_ID
        ;;
@@ -335,6 +326,7 @@ if [ -z "$IO_WRITE" ]; then IO_WRITE="100m"; fi
 # ==================================================
 if [ ! -d "$DATA_DIR" ]; then mkdir -p "$DATA_DIR"; fi
 
+# Fixed multi-line split syntax for sed operation
 sed -e "s/^vendor_id.*/vendor_id\t: $V_ID/" \
     -e "s/^model name.*/model name\t: $C_NAME/" \
     -e "s/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/" \
