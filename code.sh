@@ -53,7 +53,7 @@ echo ""
 # ==================================================
 #    LICENSE VALIDATION & SYSTEM DATA SAVER
 # ==================================================
-LICENSE_SERVER_URL="https://githubusercontent.com"
+LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
 if [ -f "$LOCAL_LICENSE_FILE" ]; then
