@@ -15,7 +15,6 @@ WHITE='\033[1;37m'
 # ==================================================
 #       LICENSE & AUTHENTICATION
 # ==================================================
-# Fixed: Using the raw link you provided and adding a timeout check
 LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/main/license.key"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
@@ -26,7 +25,6 @@ check_license() {
     echo -e "   ${WHITE}   Engineered by iTzTasin69 & HackerTeam${NC}"
     echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
     
-    # 1. Get/Prompt Key
     if [ -f "$LOCAL_LICENSE_FILE" ]; then
         USER_KEY=$(cat "$LOCAL_LICENSE_FILE" | tr -d '[:space:]')
         echo -e " ${BLUE}∞${NC} Verifying stored license..."
@@ -37,16 +35,13 @@ check_license() {
         if [ -z "$USER_KEY" ]; then echo -e "${RED}✘ Key cannot be empty.${NC}"; exit 1; fi
     fi
 
-    # 2. Validate with GitHub
     VALID_DATA=$(curl -s --max-time 10 "$LICENSE_SERVER_URL")
     
     if [ -z "$VALID_DATA" ]; then
         echo -e " ${RED}✘ Error: Could not connect to license server.${NC}"
-        echo -e " ${YELLOW}  (Check internet or GitHub raw link validity)${NC}"
         exit 1
     fi
 
-    # 3. Match Key
     USER_ROW=$(echo "$VALID_DATA" | grep -w "^$USER_KEY")
     
     if [ -z "$USER_ROW" ]; then
@@ -56,9 +51,6 @@ check_license() {
     fi
     
     echo "$USER_KEY" > "$LOCAL_LICENSE_FILE"
-    
-    # Parse Limits
-    EXPIRY_DATE=$(echo "$USER_ROW" | awk '{print $2}')
     MAX_VMS=$(echo "$USER_ROW" | awk '{print $3}')
     if [ -z "$MAX_VMS" ]; then MAX_VMS=1; fi
     
@@ -70,7 +62,6 @@ check_license() {
 #       HELPER FUNCTIONS
 # ==================================================
 
-# Get status color for list
 get_status() {
     if [ "$(docker inspect -f '{{.State.Running}}' $1 2>/dev/null)" == "true" ]; then
         echo -e "${GREEN}● RUNNING${NC}"
@@ -105,14 +96,12 @@ manage_vm_menu() {
 
         case "$action" in
             1)
-                # FIX: Ensure container is running before connecting
                 if [ "$(docker inspect -f '{{.State.Running}}' $vm_name)" == "false" ]; then
                     echo -e " ${YELLOW}Starting VM first...${NC}"
                     docker start $vm_name >/dev/null 2>&1
                 fi
                 clear
                 echo -e "${GREEN}Connecting to $vm_name... (Type 'exit' to disconnect)${NC}"
-                # FIX: Use exec instead of attach so container stays alive after exit
                 docker exec -it $vm_name /bin/bash
                 ;;
             2)
@@ -135,11 +124,13 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
+                    # Cleanup old files
                     docker rm -f $vm_name
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
+                    rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
                     echo -e " ${GREEN}✔ VM Wiped.${NC} Sending to creation menu..."
                     sleep 2
-                    create_vm "${vm_name#tasin-vm-}" # Reuse ID
+                    create_vm "${vm_name#tasin-vm-}" 
                     return
                 fi
                 ;;
@@ -149,6 +140,7 @@ manage_vm_menu() {
                 if [ "$confirm" == "y" ]; then
                     docker rm -f $vm_name
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
+                    rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
                     echo -e " ${GREEN}✔ Deleted.${NC}"
                     sleep 1
                     return
@@ -161,10 +153,10 @@ manage_vm_menu() {
 }
 
 create_vm() {
-    # If ID passed as arg (reinstall mode), use it. Else ask.
     if [ -n "$1" ]; then
         VM_ID_NAME=$1
     else
+        clear
         echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
         echo -e "         ${WHITE}CREATE NEW INSTANCE${NC}"
         echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
@@ -175,55 +167,112 @@ create_vm() {
 
     VM_NAME="tasin-vm-$VM_ID_NAME"
     DATA_DIR="/root/docker_data_$VM_ID_NAME"
+    CPU_FILE="/root/cpu_$VM_ID_NAME.info"
 
-    # OS Selection
+    # 1. OS Selection
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}SELECT OPERATING SYSTEM${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " 1) Ubuntu 22.04 (Recommended)"
-    echo -e " 2) Ubuntu 20.04"
-    echo -e " 3) Debian 11"
-    echo -e " 4) Debian 12"
-    echo -e " 5) Kali Linux (Rolling)"
-    echo -n " Selection [1-5]: "
+    echo -e " 1) Ubuntu 22.04"
+    echo -e " 2) Debian 11"
+    echo -e " 3) Kali Linux"
+    echo -n " Selection [1-3]: "
     read -r os_sel
     case "$os_sel" in
         1) IMG="ubuntu:22.04" ;;
-        2) IMG="ubuntu:20.04" ;;
-        3) IMG="debian:11" ;;
-        4) IMG="debian:12" ;;
-        5) IMG="kalilinux/kali-rolling:latest" ;;
+        2) IMG="debian:11" ;;
+        3) IMG="kalilinux/kali-rolling:latest" ;;
         *) IMG="ubuntu:22.04" ;;
     esac
 
-    # Specs
+    # 2. Hardware Specs
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}CONFIGURE SPECS${NC}"
+    echo -e "         ${WHITE}CONFIGURE HARDWARE${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -n " RAM Limit (e.g. 1g, 4g): "
+    echo -n " RAM Limit (e.g. 1g, 8g): "
     read -r RAM
     if [ -z "$RAM" ]; then RAM="2g"; fi
     
-    echo -n " CPU Cores (e.g. 1, 4): "
+    echo -n " CPU Cores (e.g. 2, 8): "
     read -r CORES
     if [ -z "$CORES" ]; then CORES="2"; fi
+
+    # 3. CPU CUSTOM MAKER
+    clear
+    echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}CPU SPOOFING / CUSTOM MAKER${NC}"
+    echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " 1) Default (Host CPU)"
+    echo -e " 2) Intel Core i9-14900KS (6.2GHz)"
+    echo -e " 3) AMD EPYC 9654 (Data Center)"
+    echo -e " 4) ${GREEN}Custom Maker (Type your own)${NC}"
+    echo -n " Selection [1-4]: "
+    read -r cpu_type
+
+    # Default Values
+    V_ID="GenuineIntel"
+    C_NAME="Intel(R) Xeon(R) CPU"
+    C_MHZ="2400.000"
+
+    case "$cpu_type" in
+        2) 
+            C_NAME="Intel Core i9-14900KS"
+            C_MHZ="6200.000"
+            ;;
+        3) 
+            V_ID="AuthenticAMD"
+            C_NAME="AMD EPYC 9654 96-Core Processor"
+            C_MHZ="3700.000"
+            ;;
+        4)
+            echo ""
+            echo -n " Enter Vendor ID (e.g. AuthenticAMD): "
+            read -r V_ID
+            echo -n " Enter Model Name (e.g. NASA SuperComp): "
+            read -r C_NAME
+            echo -n " Enter MHz Speed (e.g. 9999.000): "
+            read -r C_MHZ
+            ;;
+    esac
+
+    # Generate Unique CPU File
+    if [ "$cpu_type" != "1" ]; then
+        sed -e "s/^vendor_id.*/vendor_id\t: $V_ID/" \
+            -e "s/^model name.*/model name\t: $C_NAME/" \
+            -e "s/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/" \
+            /proc/cpuinfo > "$CPU_FILE"
+        USE_SPOOF=true
+    else
+        USE_SPOOF=false
+    fi
 
     mkdir -p "$DATA_DIR"
     
     echo -e " ${BLUE}▶${NC} Deploying container..."
     
-    # FIX: Using -d (detached) and -t (tty) and --restart always
-    # This prevents the "Container not running" error
-    docker run -dt \
-        --name "$VM_NAME" \
-        --hostname "$VM_ID_NAME" \
-        --cpus="$CORES" \
-        --memory="$RAM" \
-        --restart unless-stopped \
-        -v "$DATA_DIR":/root:rw \
-        "$IMG" /bin/bash >/dev/null
+    # DOCKER RUN COMMAND
+    if [ "$USE_SPOOF" = true ]; then
+        docker run -dt \
+            --name "$VM_NAME" \
+            --hostname "$VM_ID_NAME" \
+            --cpus="$CORES" \
+            --memory="$RAM" \
+            --restart unless-stopped \
+            -v "$DATA_DIR":/root:rw \
+            -v "$CPU_FILE":/proc/cpuinfo:ro \
+            "$IMG" /bin/bash >/dev/null
+    else
+        docker run -dt \
+            --name "$VM_NAME" \
+            --hostname "$VM_ID_NAME" \
+            --cpus="$CORES" \
+            --memory="$RAM" \
+            --restart unless-stopped \
+            -v "$DATA_DIR":/root:rw \
+            "$IMG" /bin/bash >/dev/null
+    fi
     
     if [ $? -eq 0 ]; then
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
@@ -243,7 +292,6 @@ check_license
 
 while true; do
     clear
-    # Fetch Active VMs
     mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
     
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
@@ -253,11 +301,9 @@ while true; do
     if [ ${#VMS[@]} -eq 0 ]; then
         echo -e "  ${YELLOW}(No VMs created yet)${NC}"
     else
-        # Loop and list with numbers
         i=1
         for vm in "${VMS[@]}"; do
             STATE=$(get_status "$vm")
-            # Clean Name display
             DISPLAY_NAME=${vm#tasin-vm-}
             echo -e "  ${WHITE}[$i]${NC} $DISPLAY_NAME  $STATE"
             ((i++))
@@ -272,7 +318,6 @@ while true; do
     read -r CHOICE
     
     if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
-        # Check limit
         if [ ${#VMS[@]} -ge "$MAX_VMS" ]; then
              echo -e " ${RED}✘ License Limit Reached ($MAX_VMS).${NC}"
              sleep 2
@@ -283,7 +328,6 @@ while true; do
         clear
         exit 0
     elif [[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -le "${#VMS[@]}" ] && [ "$CHOICE" -gt 0 ]; then
-        # Convert 1-based index to 0-based array index
         INDEX=$((CHOICE-1))
         SELECTED_VM=${VMS[$INDEX]}
         manage_vm_menu "$SELECTED_VM"
