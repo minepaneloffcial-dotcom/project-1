@@ -124,7 +124,6 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
-                    # Cleanup old files
                     docker rm -f $vm_name
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
@@ -169,90 +168,153 @@ create_vm() {
     DATA_DIR="/root/docker_data_$VM_ID_NAME"
     CPU_FILE="/root/cpu_$VM_ID_NAME.info"
 
-    # 1. OS Selection
+    # ==========================================
+    # 1. EXPANDED OS SELECTION
+    # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}SELECT OPERATING SYSTEM${NC}"
+    echo -e "         ${WHITE}SELECT LINUX DISTRIBUTION${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " 1) Ubuntu 22.04"
-    echo -e " 2) Debian 11"
-    echo -e " 3) Kali Linux"
-    echo -n " Selection [1-3]: "
+    echo -e " ${YELLOW}Ubuntu Server Editions:${NC}"
+    echo -e "   1) Ubuntu 22.04 LTS (Latest Stable)"
+    echo -e "   2) Ubuntu 20.04 LTS (Focal Fossa)"
+    echo -e "   3) Ubuntu 18.04 LTS (Bionic Beaver)"
+    echo -e ""
+    echo -e " ${RED}Debian Server Editions:${NC}"
+    echo -e "   4) Debian 12 (Bookworm - New)"
+    echo -e "   5) Debian 11 (Bullseye - Stable)"
+    echo -e "   6) Debian 10 (Buster - Old Stable)"
+    echo -e ""
+    echo -e " ${BLUE}Security & Other:${NC}"
+    echo -e "   7) Kali Linux (Rolling)"
+    echo -e "   8) Alpine Linux"
+    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+    echo -n " Selection [1-8]: "
     read -r os_sel
     case "$os_sel" in
         1) IMG="ubuntu:22.04" ;;
-        2) IMG="debian:11" ;;
-        3) IMG="kalilinux/kali-rolling:latest" ;;
+        2) IMG="ubuntu:20.04" ;;
+        3) IMG="ubuntu:18.04" ;;
+        4) IMG="debian:12" ;;
+        5) IMG="debian:11" ;;
+        6) IMG="debian:10" ;;
+        7) IMG="kalilinux/kali-rolling:latest" ;;
+        8) IMG="alpine:latest" ;;
         *) IMG="ubuntu:22.04" ;;
     esac
 
-    # 2. Hardware Specs
+    # ==========================================
+    # 2. HARDWARE RESOURCES
+    # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}CONFIGURE HARDWARE${NC}"
+    echo -e "         ${WHITE}CONFIGURE RESOURCES${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -n " RAM Limit (e.g. 1g, 8g): "
+    echo -n " RAM Limit (e.g. 512m, 2g, 8g): "
     read -r RAM
     if [ -z "$RAM" ]; then RAM="2g"; fi
     
-    echo -n " CPU Cores (e.g. 2, 8): "
+    echo -n " CPU Cores (e.g. 1, 4, 8): "
     read -r CORES
     if [ -z "$CORES" ]; then CORES="2"; fi
 
-    # 3. CPU CUSTOM MAKER
+    # ==========================================
+    # 3. ADVANCED CPU MAKER (NESTED LOGIC)
+    # ==========================================
     clear
     echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}CPU SPOOFING / CUSTOM MAKER${NC}"
+    echo -e "         ${WHITE}SELECT CPU VENDOR ID${NC}"
     echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " 1) Default (Host CPU)"
-    echo -e " 2) Intel Core i9-14900KS (6.2GHz)"
-    echo -e " 3) AMD EPYC 9654 (Data Center)"
-    echo -e " 4) ${GREEN}Custom Maker (Type your own)${NC}"
-    echo -n " Selection [1-4]: "
-    read -r cpu_type
+    echo -e " 1) ${BLUE}GenuineIntel${NC} (Intel Corporation)"
+    echo -e " 2) ${RED}AuthenticAMD${NC} (Advanced Micro Devices)"
+    echo -e " 3) ${GREEN}Custom / Manual Entry${NC}"
+    echo -e " 4) Default (Host CPU)"
+    echo -n " Select Vendor [1-4]: "
+    read -r vendor_sel
 
-    # Default Values
+    # Defaults
     V_ID="GenuineIntel"
-    C_NAME="Intel(R) Xeon(R) CPU"
-    C_MHZ="2400.000"
+    C_NAME="Intel Xeon"
+    C_MHZ="2500.000"
+    USE_SPOOF=true
 
-    case "$cpu_type" in
-        2) 
-            C_NAME="Intel Core i9-14900KS"
-            C_MHZ="6200.000"
+    case "$vendor_sel" in
+        1) 
+            # INTEL MENU
+            V_ID="GenuineIntel"
+            clear
+            echo -e "${BLUE}┌──────────────────────────────────────────────────┐${NC}"
+            echo -e "         ${WHITE}SELECT INTEL PROCESSOR MODEL${NC}"
+            echo -e "${BLUE}└──────────────────────────────────────────────────┘${NC}"
+            echo -e " 1) Intel Core i9-14900KS (6.2 GHz)"
+            echo -e " 2) Intel Xeon Platinum 8490H (Scalable)"
+            echo -e " 3) Intel Xeon Gold 6130"
+            echo -e " 4) Intel Core i7-12700K"
+            echo -n " Select Intel Model [1-4]: "
+            read -r intel_model
+            case "$intel_model" in
+                1) C_NAME="Intel(R) Core(TM) i9-14900KS"; C_MHZ="6200.000" ;;
+                2) C_NAME="Intel(R) Xeon(R) Platinum 8490H"; C_MHZ="3500.000" ;;
+                3) C_NAME="Intel(R) Xeon(R) Gold 6130 CPU @ 2.10GHz"; C_MHZ="2100.000" ;;
+                4) C_NAME="Intel(R) Core(TM) i7-12700K"; C_MHZ="5000.000" ;;
+                *) C_NAME="Intel(R) Xeon(R) CPU"; C_MHZ="2500.000" ;;
+            esac
             ;;
-        3) 
+        2) 
+            # AMD MENU
             V_ID="AuthenticAMD"
-            C_NAME="AMD EPYC 9654 96-Core Processor"
-            C_MHZ="3700.000"
+            clear
+            echo -e "${RED}┌──────────────────────────────────────────────────┐${NC}"
+            echo -e "         ${WHITE}SELECT AMD PROCESSOR MODEL${NC}"
+            echo -e "${RED}└──────────────────────────────────────────────────┘${NC}"
+            echo -e " 1) AMD EPYC 9654 (96-Core Data Center)"
+            echo -e " 2) AMD Ryzen 9 7950X3D (Gaming Flagship)"
+            echo -e " 3) AMD Ryzen Threadripper PRO 5995WX"
+            echo -e " 4) AMD EPYC 7763"
+            echo -n " Select AMD Model [1-4]: "
+            read -r amd_model
+            case "$amd_model" in
+                1) C_NAME="AMD EPYC 9654 96-Core Processor"; C_MHZ="3700.000" ;;
+                2) C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"; C_MHZ="5700.000" ;;
+                3) C_NAME="AMD Ryzen Threadripper PRO 5995WX"; C_MHZ="4500.000" ;;
+                4) C_NAME="AMD EPYC 7763 64-Core Processor"; C_MHZ="2450.000" ;;
+                *) C_NAME="AMD EPYC Processor"; C_MHZ="3000.000" ;;
+            esac
+            ;;
+        3)
+            # CUSTOM MANUAL ENTRY
+            clear
+            echo -e "${GREEN}┌──────────────────────────────────────────────────┐${NC}"
+            echo -e "         ${WHITE}CUSTOM CPU BUILDER${NC}"
+            echo -e "${GREEN}└──────────────────────────────────────────────────┘${NC}"
+            echo -n " 1. Enter Vendor ID (e.g. AuthenticAMD): "
+            read -r V_ID
+            echo -n " 2. Enter Model Name (e.g. NASA SuperComputer): "
+            read -r C_NAME
+            echo -n " 3. Enter Speed in MHz (e.g. 9999.999): "
+            read -r C_MHZ
             ;;
         4)
-            echo ""
-            echo -n " Enter Vendor ID (e.g. AuthenticAMD): "
-            read -r V_ID
-            echo -n " Enter Model Name (e.g. NASA SuperComp): "
-            read -r C_NAME
-            echo -n " Enter MHz Speed (e.g. 9999.000): "
-            read -r C_MHZ
+            USE_SPOOF=false
+            ;;
+        *)
+            USE_SPOOF=false
             ;;
     esac
 
-    # Generate Unique CPU File
-    if [ "$cpu_type" != "1" ]; then
+    # Generate CPU File
+    if [ "$USE_SPOOF" = true ]; then
         sed -e "s/^vendor_id.*/vendor_id\t: $V_ID/" \
             -e "s/^model name.*/model name\t: $C_NAME/" \
             -e "s/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/" \
             /proc/cpuinfo > "$CPU_FILE"
-        USE_SPOOF=true
-    else
-        USE_SPOOF=false
     fi
 
     mkdir -p "$DATA_DIR"
     
     echo -e " ${BLUE}▶${NC} Deploying container..."
     
-    # DOCKER RUN COMMAND
+    # DOCKER RUN
     if [ "$USE_SPOOF" = true ]; then
         docker run -dt \
             --name "$VM_NAME" \
