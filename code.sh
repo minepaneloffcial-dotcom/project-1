@@ -11,11 +11,7 @@ BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 
-# ==================================================
-#       ⚙️ CUSTOM CONFIGURATIONS & BRANDING
-# ==================================================
-HOST_BRANDING="Cryzon Cloud Host Ltd."
-LICENSE_SERVER_URL="https://githubusercontent.com"
+LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
 check_license() {
@@ -74,7 +70,6 @@ manage_vm_menu() {
         echo -e "                  MANAGE VPS                      "
         echo -e "${CYAN}==================================================${NC}"
         echo ""
-        echo -e " Provider: ${YELLOW}$HOST_BRANDING${NC}"
         echo -e " VPS Name: ${WHITE}$vm_name${NC}"
         echo -e " Status:   $(get_status $vm_name)"
         echo ""
@@ -98,7 +93,8 @@ manage_vm_menu() {
                 clear
                 echo -e " Connecting to terminal. Type 'exit' to disconnect."
                 echo ""
-                docker exec -it $vm_name /bin/bash
+                # Fallback to /bin/sh if /bin/bash is not available (e.g., Alpine)
+                docker exec -it $vm_name /bin/bash 2>/dev/null || docker exec -it $vm_name /bin/sh
                 ;;
             2)
                 docker restart $vm_name >/dev/null 2>&1
@@ -146,6 +142,7 @@ manage_vm_menu() {
 }
 
 create_vm() {
+    VM_HOST="" # Reset for reinstall scenarios
     if [ -n "$1" ]; then
         VM_ID_NAME=$1
     else
@@ -153,7 +150,6 @@ create_vm() {
         echo -e "${CYAN}==================================================${NC}"
         echo -e "                  CREATE NEW VPS                  "
         echo -e "${CYAN}==================================================${NC}"
-        echo -e " Host Cloud: ${YELLOW}$HOST_BRANDING${NC}"
         echo ""
         echo -n " Enter VPS Name (e.g., node-1): "
         read -r INPUT_NAME
@@ -162,6 +158,9 @@ create_vm() {
         echo -n " Enter Root Password: "
         read -r VM_PASS
         if [ -z "$VM_PASS" ]; then VM_PASS="root"; fi
+        
+        echo -n " Set VPS Host (e.g., Cryzon Cloud Host Ltd.): "
+        read -r VM_HOST
     fi
 
     VM_NAME="tasin-vm-$VM_ID_NAME"
@@ -194,6 +193,12 @@ create_vm() {
         6) IMG="alpine:latest" ;;
         *) IMG="ubuntu:22.04" ;;
     esac
+
+    # Set Shell Command logic (Alpine uses /bin/sh by default)
+    SHELL_CMD="/bin/bash"
+    if [[ "$IMG" == *"alpine"* ]]; then
+        SHELL_CMD="/bin/sh"
+    fi
 
     # ==========================================
     # HARDWARE ALLOCATION
@@ -231,7 +236,7 @@ create_vm() {
     fi
 
     # ==========================================
-    # CPU SPOOFER SELECTION
+    # CPU SPOOFER SELECTION (FIXED METHOD)
     # ==========================================
     clear
     echo -e "${CYAN}==================================================${NC}"
@@ -264,7 +269,7 @@ create_vm() {
 
     mkdir -p "$DATA_DIR"
 
-    # Build container engine configuration profile
+    # Build robust run architecture command configurations
     DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
 
     if [ "$MODE" == "dedicated" ]; then
@@ -274,48 +279,53 @@ create_vm() {
         DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""
     fi
 
-    DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
+    DOCKER_CMD="$DOCKER_CMD \"$IMG\" $SHELL_CMD"
 
-    # Execute main setup routine
+    # Initialize Deploy
     eval "$DOCKER_CMD" >/dev/null 2>&1
+    DEPLOY_STATUS=$?
     
-    # Execution validation routine fallback
-    if [ $? -ne 0 ]; then
-    # Execution validation routine fallback
-    if [ $? -ne 0 ]; then
+    # KERNEL FALLBACK REPAIR
+    if [ "$DEPLOY_STATUS" -ne 0 ]; then
         DOCKER_REPAIR_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped --oom-kill-disable=false -v \"$DATA_DIR\":/root:rw"
         if [ -n "$CORES" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --cpus=\"$CORES\""; fi
         if [ -n "$RAM" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --memory=\"$RAM\""; fi
         if [ -c /dev/kvm ] && [ "$MODE" == "dedicated" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --device /dev/kvm"; fi
-        DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD \"$IMG\" /bin/bash"
+        DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD \"$IMG\" $SHELL_CMD"
 
         eval "$DOCKER_REPAIR_CMD" >/dev/null 2>&1
+        DEPLOY_STATUS=$?
     fi
 
-    if [ $? -eq 0 ]; then
-        # Provision base access authentication properties inside environment
-        docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
+    if [ "$DEPLOY_STATUS" -eq 0 ]; then
+        # Configuration setup inside container environment logic
+        # Attempts chpasswd, falls back to standard passwd for Alpine compatibility
+        docker exec "$VM_NAME" /bin/sh -c "echo 'root:$VM_PASS' | chpasswd 2>/dev/null || echo -e \"$VM_PASS\n$VM_PASS\" | passwd root >/dev/null 2>&1"
         
-        # Inject Custom Environment Branding Metrics & Terminal Shell prompt configurations
-        docker exec "$VM_NAME" /bin/bash -c "echo -e '\n# --- Host Branding ---' >> /root/.bashrc" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "echo 'export PS1=\"\[[1;36m\][${HOST_BRANDING}]\[[0m\] \[[1;32m\]@\h\[[0m\]:\[[1;34m\]\w\[[0m\]\$ \"' >> /root/.bashrc" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "echo 'echo -e \"\nWelcome to your instance provided by ${WHITE}${HOST_BRANDING}${NC}\n\"' >> /root/.bashrc" 2>/dev/null
-
-        # Spoof internal platform properties matching user profile specs
-        if [ "$USE_SPOOF" = true ]; then
-            docker exec "$VM_NAME" /bin/bash -c "cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/cpuinfo.mock" 2>/dev/null
-            docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/cpuinfo.mock #\"' >> /root/.bashrc" 2>/dev/null
-            docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/cpuinfo.mock; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
+        # Apply VPS Host / Provider Name
+        if [ -n "$VM_HOST" ]; then
+            docker exec "$VM_NAME" /bin/sh -c "echo '' >> /etc/motd; echo \"  Powered by $VM_HOST\" >> /etc/motd; echo '' >> /etc/motd" 2>/dev/null
         fi
-        echo -e " ${GREEN}VPS created successfully under $HOST_BRANDING.${NC}"
+        
+        # FIXED USER SPOOFING WORKAROUND PIPELINE
+        if [ "$USE_SPOOF" = true ]; then
+            docker exec "$VM_NAME" /bin/sh -c "cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/cpuinfo.mock" 2>/dev/null
+            
+            if [ "$SHELL_CMD" == "/bin/bash" ]; then
+                docker exec "$VM_NAME" /bin/sh -c "echo 'alias cat=\"cat /etc/cpuinfo.mock #\"' >> /root/.bashrc" 2>/dev/null
+                docker exec "$VM_NAME" /bin/sh -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/cpuinfo.mock; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
+            else
+                docker exec "$VM_NAME" /bin/sh -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/cpuinfo.mock; else command cat \"\$@\"; fi; }' >> /root/.profile" 2>/dev/null
+            fi
+        fi
+        echo -e " ${GREEN}VPS created successfully.${NC}"
         sleep 1
         manage_vm_menu "$VM_NAME"
     else
-        echo -e ""
         echo -e " ${RED}✘ [SYSTEM FAULT] Creation failed. Please confirm Docker daemon service status by typing: systemctl restart docker${NC}"
-        echo -e ""
-        sleep 4
+        sleep 3
     fi
+}
 
 # ==================================================
 #            🔄 MAIN INTERFACE LOOP
@@ -326,7 +336,7 @@ while true; do
     clear
     mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
     echo -e "${CYAN}==================================================${NC}"
-    echo -e "            MASTER VPS CONTROLLER ($HOST_BRANDING) "
+    echo -e "               MASTER VPS CONTROLLER              "
     echo -e "${CYAN}==================================================${NC}"
     echo ""
     if [ ${#VMS[@]} -eq 0 ]; then
