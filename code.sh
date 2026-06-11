@@ -11,7 +11,11 @@ BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 
-LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
+# ==================================================
+#       ⚙️ CUSTOM CONFIGURATIONS & BRANDING
+# ==================================================
+HOST_BRANDING="Cryzon Cloud Host Ltd."
+LICENSE_SERVER_URL="https://githubusercontent.com"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
 check_license() {
@@ -70,6 +74,7 @@ manage_vm_menu() {
         echo -e "                  MANAGE VPS                      "
         echo -e "${CYAN}==================================================${NC}"
         echo ""
+        echo -e " Provider: ${YELLOW}$HOST_BRANDING${NC}"
         echo -e " VPS Name: ${WHITE}$vm_name${NC}"
         echo -e " Status:   $(get_status $vm_name)"
         echo ""
@@ -148,6 +153,7 @@ create_vm() {
         echo -e "${CYAN}==================================================${NC}"
         echo -e "                  CREATE NEW VPS                  "
         echo -e "${CYAN}==================================================${NC}"
+        echo -e " Host Cloud: ${YELLOW}$HOST_BRANDING${NC}"
         echo ""
         echo -n " Enter VPS Name (e.g., node-1): "
         read -r INPUT_NAME
@@ -225,7 +231,7 @@ create_vm() {
     fi
 
     # ==========================================
-    # CPU SPOOFER SELECTION (FIXED METHOD)
+    # CPU SPOOFER SELECTION
     # ==========================================
     clear
     echo -e "${CYAN}==================================================${NC}"
@@ -258,7 +264,7 @@ create_vm() {
 
     mkdir -p "$DATA_DIR"
 
-    # Build robust run architecture command configurations
+    # Build container engine configuration profile
     DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
 
     if [ "$MODE" == "dedicated" ]; then
@@ -270,38 +276,46 @@ create_vm() {
 
     DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
 
-    # Initialize Deploy
+    # Execute main setup routine
     eval "$DOCKER_CMD" >/dev/null 2>&1
     
-    # KERNEL FALLBACK REPAIR
+    # Execution validation routine fallback
+    if [ $? -ne 0 ]; then
+    # Execution validation routine fallback
     if [ $? -ne 0 ]; then
         DOCKER_REPAIR_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped --oom-kill-disable=false -v \"$DATA_DIR\":/root:rw"
         if [ -n "$CORES" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --cpus=\"$CORES\""; fi
+        if [ -n "$RAM" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --memory=\"$RAM\""; fi
+        if [ -c /dev/kvm ] && [ "$MODE" == "dedicated" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --device /dev/kvm"; fi
+        DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD \"$IMG\" /bin/bash"
 
-if [ -n "$RAM" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --memory=\"$RAM\""; fi
-if [ -c /dev/kvm ] && [ "$MODE" == "dedicated" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --device /dev/kvm"; fi
-DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD \"$IMG\" /bin/bash"
-
-eval "$DOCKER_REPAIR_CMD" >/dev/null 2>&1
-fi
-
-if [ $? -eq 0 ]; then
-    # Configuration setup inside container environment logic
-    docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
-    
-    # FIXED USER SPOOFING WORKAROUND PIPELINE
-    if [ "$USE_SPOOF" = true ]; then
-        docker exec "$VM_NAME" /bin/bash -c "cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/cpuinfo.mock" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/cpuinfo.mock #\"' >> /root/.bashrc" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/cpuinfo.mock; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
+        eval "$DOCKER_REPAIR_CMD" >/dev/null 2>&1
     fi
-    echo -e " ${GREEN}VPS created successfully.${NC}"
-    sleep 1
-    manage_vm_menu "$VM_NAME"
-else
-    echo -e " ${RED}Error: VPS creation failed. Check Docker status via systemctl status docker${NC}"
-    sleep 3
-fi
+
+    if [ $? -eq 0 ]; then
+        # Provision base access authentication properties inside environment
+        docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
+        
+        # Inject Custom Environment Branding Metrics & Terminal Shell prompt configurations
+        docker exec "$VM_NAME" /bin/bash -c "echo -e '\n# --- Host Branding ---' >> /root/.bashrc" 2>/dev/null
+        docker exec "$VM_NAME" /bin/bash -c "echo 'export PS1=\"\[[1;36m\][${HOST_BRANDING}]\[[0m\] \[[1;32m\]@\h\[[0m\]:\[[1;34m\]\w\[[0m\]\$ \"' >> /root/.bashrc" 2>/dev/null
+        docker exec "$VM_NAME" /bin/bash -c "echo 'echo -e \"\nWelcome to your instance provided by ${WHITE}${HOST_BRANDING}${NC}\n\"' >> /root/.bashrc" 2>/dev/null
+
+        # Spoof internal platform properties matching user profile specs
+        if [ "$USE_SPOOF" = true ]; then
+            docker exec "$VM_NAME" /bin/bash -c "cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/cpuinfo.mock" 2>/dev/null
+            docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/cpuinfo.mock #\"' >> /root/.bashrc" 2>/dev/null
+            docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/cpuinfo.mock; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
+        fi
+        echo -e " ${GREEN}VPS created successfully under $HOST_BRANDING.${NC}"
+        sleep 1
+        manage_vm_menu "$VM_NAME"
+    else
+        echo -e ""
+        echo -e " ${RED}✘ [SYSTEM FAULT] Creation failed. Please confirm Docker daemon service status by typing: systemctl restart docker${NC}"
+        echo -e ""
+        sleep 4
+    fi
 }
 
 # ==================================================
@@ -313,7 +327,7 @@ while true; do
     clear
     mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
     echo -e "${CYAN}==================================================${NC}"
-    echo -e "               MASTER VPS CONTROLLER              "
+    echo -e "            MASTER VPS CONTROLLER ($HOST_BRANDING) "
     echo -e "${CYAN}==================================================${NC}"
     echo ""
     if [ ${#VMS[@]} -eq 0 ]; then
