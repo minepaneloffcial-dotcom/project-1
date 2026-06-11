@@ -11,7 +11,7 @@ BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 
-LICENSE_SERVER_URL="https://githubusercontent.com"
+LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
 check_license() {
