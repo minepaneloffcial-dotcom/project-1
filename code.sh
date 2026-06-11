@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==================================================
-#       🎨 OLD-SCHOOL ASCII COLOR PALETTE
+#       🎨 CLEAN MINIMALIST COLOR PALETTE
 # ==================================================
 NC='\033[0m' 
 RED='\033[1;31m'
@@ -11,15 +11,14 @@ BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 
-# FIXED REPOSITORY TREE URL PATHWAY
-LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
+LICENSE_SERVER_URL="https://githubusercontent.com"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
 check_license() {
     clear
-    echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║              SYSTEM AUTHENTICATION               ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "               SYSTEM AUTHENTICATION              "
+    echo -e "${CYAN}==================================================${NC}"
     echo ""
     
     if [ -f "$LOCAL_LICENSE_FILE" ]; then
@@ -32,12 +31,7 @@ check_license() {
         if [ -z "$USER_KEY" ]; then echo -e "${RED} Error: Key cannot be empty.${NC}"; exit 1; fi
     fi
 
-    # NETWORK FALLBACK FETCH MATRIX Engine
-    if command -v curl >/dev/null 2>&1; then
-        VALID_DATA=$(curl -sL --max-time 15 "$LICENSE_SERVER_URL")
-    else
-        VALID_DATA=$(wget -qO- --timeout=15 "$LICENSE_SERVER_URL")
-    fi
+    VALID_DATA=$(curl -s --max-time 10 "$LICENSE_SERVER_URL")
     
     if [ -z "$VALID_DATA" ]; then
         echo -e " ${RED}Error: Server unreachable.${NC}"
@@ -72,22 +66,22 @@ manage_vm_menu() {
     local vm_name=$1
     while true; do
         clear
-        echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║                    MANAGE VPS                    ║${NC}"
-        echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+        echo -e "${CYAN}==================================================${NC}"
+        echo -e "                  MANAGE VPS                      "
+        echo -e "${CYAN}==================================================${NC}"
         echo ""
-        echo -e "  VPS Name: ${WHITE}$vm_name${NC}"
-        echo -e "  Status:   $(get_status $vm_name)"
+        echo -e " VPS Name: ${WHITE}$vm_name${NC}"
+        echo -e " Status:   $(get_status $vm_name)"
         echo ""
-        echo -e "  Open Terminal Console"
-        echo -e "  Restart VPS"
-        echo -e "  Stop VPS"
-        echo -e "  Start VPS"
-        echo -e "  Reinstall OS"
-        echo -e "  Remove VPS"
-        echo -e "  Back to Menu"
+        echo -e " [1] Open Terminal Console"
+        echo -e " [2] Restart VPS"
+        echo -e " [3] Stop VPS"
+        echo -e " [4] Start VPS"
+        echo -e " [5] Reinstall OS"
+        echo -e " [6] Remove VPS"
+        echo -e " [0] Back to Menu"
         echo ""
-        echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+        echo -e "${CYAN}==================================================${NC}"
         echo -n " Choose option: "
         read -r action
 
@@ -151,9 +145,9 @@ create_vm() {
         VM_ID_NAME=$1
     else
         clear
-        echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║                  CREATE NEW VPS                  ║${NC}"
-        echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+        echo -e "${CYAN}==================================================${NC}"
+        echo -e "                  CREATE NEW VPS                  "
+        echo -e "${CYAN}==================================================${NC}"
         echo ""
         echo -n " Enter VPS Name (e.g., node-1): "
         read -r INPUT_NAME
@@ -162,36 +156,27 @@ create_vm() {
         echo -n " Enter Root Password: "
         read -r VM_PASS
         if [ -z "$VM_PASS" ]; then VM_PASS="root"; fi
-        
-        echo -n " Enter VPS Host Name (e.g., Cryzon Cloud Host Ltd.): "
-        read -r VM_HOST_BRAND
-        if [ -z "$VM_HOST_BRAND" ]; then VM_HOST_BRAND="Cryzon Cloud Host Ltd."; fi
     fi
 
     VM_NAME="tasin-vm-$VM_ID_NAME"
     DATA_DIR="/root/docker_data_$VM_ID_NAME"
 
-    if [ "$(docker ps -a -q -f name=^${VM_NAME}$)" ]; then
-        echo -e " ${YELLOW}Cleaning up old container conflicts...${NC}"
-        docker rm -f "$VM_NAME" >/dev/null 2>&1
-    fi
-
     # ==========================================
     # OS SELECTION MENU
     # ==========================================
     clear
-    echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                 SELECT OS ENGINE                 ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "                  SELECT OS ENGINE                "
+    echo -e "${CYAN}==================================================${NC}"
     echo ""
-    echo -e "  Ubuntu 22.04 LTS"
-    echo -e "  Ubuntu 20.04 LTS"
-    echo -e "  Debian 12 (Bookworm)"
-    echo -e "  Debian 11 (Bullseye)"
-    echo -e "  Kali Linux"
-    echo -e "  Alpine Linux (Lightweight)"
+    echo -e " [1] Ubuntu 22.04 LTS"
+    echo -e " [2] Ubuntu 20.04 LTS"
+    echo -e " [3] Debian 12 (Bookworm)"
+    echo -e " [4] Debian 11 (Bullseye)"
+    echo -e " [5] Kali Linux"
+    echo -e " [6] Alpine Linux (Lightweight)"
     echo ""
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
     echo -n " Choose Operating System [1-6]: "
     read -r os_sel
     case "$os_sel" in
@@ -208,15 +193,15 @@ create_vm() {
     # HARDWARE ALLOCATION
     # ==========================================
     clear
-    echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║               RESOURCE ALLOCATION                ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "               RESOURCE ALLOCATION                "
+    echo -e "${CYAN}==================================================${NC}"
     echo ""
-    echo -e "  Dedicated Mode (Strict Limits)"
-    echo -e "  Shared Mode (Burstable Limits)"
-    echo -e "  Unlimited Mode (Uses Host Limits)"
+    echo -e " [1] Dedicated Mode (Strict Limits)"
+    echo -e " [2] Shared Mode (Burstable Limits)"
+    echo -e " [3] Unlimited Mode (Uses Host Limits)"
     echo ""
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
     echo -n " Select Mode [1-3]: "
     read -r res_type
 
@@ -240,20 +225,20 @@ create_vm() {
     fi
 
     # ==========================================
-    # CPU SELECTION MENU
+    # CPU SPOOFER SELECTION (FIXED METHOD)
     # ==========================================
     clear
-    echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                 SELECT YOUR CPU                  ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "                  SELECT YOUR CPU                 "
+    echo -e "${CYAN}==================================================${NC}"
     echo ""
-    echo -e "  AMD EPYC 9654 (96 Cores)"
-    echo -e "  AMD Ryzen 9 7950X3D"
-    echo -e "  Intel Core i9-14900KS"
-    echo -e "  Intel Xeon Platinum 8490H"
-    echo -e "  Use Real Host CPU (No Spoof)"
+    echo -e " [1] AMD EPYC 9654 (96 Cores)"
+    echo -e " [2] AMD Ryzen 9 7950X3D"
+    echo -e " [3] Intel Core i9-14900KS"
+    echo -e " [4] Intel Xeon Platinum 8490H"
+    echo -e " [5] Use Real Host CPU (No Spoof)"
     echo ""
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
     echo -n " Choose Processor Model [1-5]: "
     read -r vendor_sel
 
@@ -273,45 +258,43 @@ create_vm() {
 
     mkdir -p "$DATA_DIR"
 
-    SUCCESS=false
+    # Build robust run architecture command configurations
+    DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
 
-    # Try 1: Privileged Mode with Limits
-    DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --privileged --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
-    if [ -c /dev/kvm ]; then DOCKER_CMD="$DOCKER_CMD --device /dev/kvm"; fi
-if [ "$MODE" != "unlimited" ]; then DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""; fi
-DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
-eval "$DOCKER_CMD" >/dev/null 2>&1
-if [ $? -eq 0 ]; then SUCCESS=true; fi
-
-# Try 2: Standard Capability Mode
-if [ "$SUCCESS" = false ]; then
-    DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --cap-add=SYS_ADMIN --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
-    if [ -c /dev/kvm ]; then DOCKER_CMD="$DOCKER_CMD --device /dev/kvm"; fi
-    if [ "$MODE" != "unlimited" ]; then DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""; fi
-    DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
-    eval "$DOCKER_CMD" >/dev/null 2>&1
-    if [ $? -eq 0 ]; then SUCCESS=true; fi
-fi
-
-# Try 3: Safe Mode
-if [ "$SUCCESS" = false ]; then
-    DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw \"$IMG\" /bin/bash"
-    eval "$DOCKER_CMD" >/dev/null 2>&1
-    if [ $? -eq 0 ]; then SUCCESS=true; fi
-fi
-
-if [ "$SUCCESS" = true ]; then
-    docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
-    
-    if [ "$USE_SPOOF" = true ]; then
-        docker exec "$VM_NAME" /bin/bash -c "mkdir -p /etc/fake && cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/fake/cpuinfo" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/fake/cpuinfo #\"' >> /root/.bashrc" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/fake/cpuinfo; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
+    if [ "$MODE" == "dedicated" ]; then
+        DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\" --memory-swap=\"$RAM\""
+        if [ -c /dev/kvm ]; then DOCKER_CMD="$DOCKER_CMD --device /dev/kvm"; fi
+    elif [ "$MODE" == "shared" ]; then
+        DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""
     fi
 
-    docker exec "$VM_NAME" /bin/bash -c "echo 'export VPS_HOST_BRAND=\"$VM_HOST_BRAND\"' >> /root/.bashrc" 2>/dev/null
-    docker exec "$VM_NAME" /bin/bash -c "sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME=\"Ubuntu 22.04.5 LTS (Powered by $VM_HOST_BRAND)\"/' /etc/os-release 2>/dev/null"
+    DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
 
+    # Initialize Deploy
+    eval "$DOCKER_CMD" >/dev/null 2>&1
+    
+    # KERNEL FALLBACK REPAIR
+    if [ $? -ne 0 ]; then
+        DOCKER_REPAIR_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped --oom-kill-disable=false -v \"$DATA_DIR\":/root:rw"
+        if [ -n "$CORES" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --cpus=\"$CORES\""; fi
+
+if [ -n "$RAM" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --memory=\"$RAM\""; fi
+if [ -c /dev/kvm ] && [ "$MODE" == "dedicated" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --device /dev/kvm"; fi
+DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD \"$IMG\" /bin/bash"
+
+eval "$DOCKER_REPAIR_CMD" >/dev/null 2>&1
+fi
+
+if [ $? -eq 0 ]; then
+    # Configuration setup inside container environment logic
+    docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
+    
+    # FIXED USER SPOOFING WORKAROUND PIPELINE
+    if [ "$USE_SPOOF" = true ]; then
+        docker exec "$VM_NAME" /bin/bash -c "cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/cpuinfo.mock" 2>/dev/null
+        docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/cpuinfo.mock #\"' >> /root/.bashrc" 2>/dev/null
+        docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/cpuinfo.mock; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
+    fi
     echo -e " ${GREEN}VPS created successfully.${NC}"
     sleep 1
     manage_vm_menu "$VM_NAME"
@@ -322,19 +305,17 @@ fi
 }
 
 # ==================================================
-#       🔄 MASTER MAIN INTERFACE LOOP
+#            🔄 MAIN INTERFACE LOOP
 # ==================================================
 check_license
 
 while true; do
     clear
     mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
-    
-    echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║              MASTER VPS CONTROLLER               ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "               MASTER VPS CONTROLLER              "
+    echo -e "${CYAN}==================================================${NC}"
     echo ""
-    
     if [ ${#VMS[@]} -eq 0 ]; then
         echo -e "   No active VPS containers found."
     else
@@ -346,15 +327,14 @@ while true; do
             ((i++))
         done
     fi
-    
     echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}==================================================${NC}"
     echo -e "  [N] Create VPS"
     echo -e "  [E] Exit Panel"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}==================================================${NC}"
     echo -n " Enter option choice: "
     read -r CHOICE
-    
+
     if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
         if [ ${#VMS[@]} -ge "$MAX_VMS" ]; then
              echo -e " ${RED}Error: VPS quota limit reached ($MAX_VMS max).${NC}"
