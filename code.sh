@@ -73,13 +73,13 @@ manage_vm_menu() {
         echo -e "  VPS Name: ${WHITE}$vm_name${NC}"
         echo -e "  Status:   $(get_status $vm_name)"
         echo ""
-        echo -e "  [1] Open Terminal Console"
-        echo -e "  [2] Restart VPS"
-        echo -e "  [3] Stop VPS"
-        echo -e "  [4] Start VPS"
-        echo -e "  [5] Reinstall OS"
-        echo -e "  [6] Remove VPS"
-        echo -e "  [0] Back to Menu"
+        echo -e "  Open Terminal Console"
+        echo -e "  Restart VPS"
+        echo -e "  Stop VPS"
+        echo -e "  Start VPS"
+        echo -e "  Reinstall OS"
+        echo -e "  Remove VPS"
+        echo -e "  Back to Menu"
         echo ""
         echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
         echo -n " Choose option: "
@@ -166,6 +166,14 @@ create_vm() {
     DATA_DIR="/root/docker_data_$VM_ID_NAME"
 
     # ==========================================
+    # 🔥 FIX: AUTO-PURGE DEAD NAME CONFLICTS
+    # ==========================================
+    if [ "$(docker ps -a -q -f name=^${VM_NAME}$)" ]; then
+        echo -e " ${YELLOW}Cleaning up old container conflicts...${NC}"
+        docker rm -f "$VM_NAME" >/dev/null 2>&1
+    fi
+
+    # ==========================================
     # OS SELECTION MENU
     # ==========================================
     clear
@@ -173,12 +181,12 @@ create_vm() {
     echo -e "${CYAN}║                 SELECT OS ENGINE                 ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  [1] Ubuntu 22.04 LTS"
-    echo -e "  [2] Ubuntu 20.04 LTS"
-    echo -e "  [3] Debian 12 (Bookworm)"
-    echo -e "  [4] Debian 11 (Bullseye)"
-    echo -e "  [5] Kali Linux"
-    echo -e "  [6] Alpine Linux (Lightweight)"
+    echo -e "  Ubuntu 22.04 LTS"
+    echo -e "  Ubuntu 20.04 LTS"
+    echo -e "  Debian 12 (Bookworm)"
+    echo -e "  Debian 11 (Bullseye)"
+    echo -e "  Kali Linux"
+    echo -e "  Alpine Linux (Lightweight)"
     echo ""
     echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
     echo -n " Choose Operating System [1-6]: "
@@ -201,9 +209,9 @@ create_vm() {
     echo -e "${CYAN}║               RESOURCE ALLOCATION                ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  [1] Dedicated Mode (Strict Limits)"
-    echo -e "  [2] Shared Mode (Burstable Limits)"
-    echo -e "  [3] Unlimited Mode (Uses Host Limits)"
+    echo -e "  Dedicated Mode (Strict Limits)"
+    echo -e "  Shared Mode (Burstable Limits)"
+    echo -e "  Unlimited Mode (Uses Host Limits)"
     echo ""
     echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
     echo -n " Select Mode [1-3]: "
@@ -236,11 +244,11 @@ create_vm() {
     echo -e "${CYAN}║                 SELECT YOUR CPU                  ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  [1] AMD EPYC 9654 (96 Cores)"
-    echo -e "  [2] AMD Ryzen 9 7950X3D"
-    echo -e "  [3] Intel Core i9-14900KS"
-    echo -e "  [4] Intel Xeon Platinum 8490H"
-    echo -e "  [5] Use Real Host CPU (No Spoof)"
+    echo -e "  AMD EPYC 9654 (96 Cores)"
+    echo -e "  AMD Ryzen 9 7950X3D"
+    echo -e "  Intel Core i9-14900KS"
+    echo -e "  Intel Xeon Platinum 8490H"
+    echo -e "  Use Real Host CPU (No Spoof)"
     echo ""
     echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
     echo -n " Choose Processor Model [1-5]: "
@@ -263,57 +271,56 @@ create_vm() {
     mkdir -p "$DATA_DIR"
 
     # ==========================================
-    # ⚙️ ADVANCED CAPABILITY ISOLATION CONSTRUCTOR
+    # ⚙️ MULTI-TRY CAPABILITY REPAIR LOGIC
     # ==========================================
     SUCCESS=false
 
-    # Attempt 1: Privileged Execution + Device KVM Mapping
+    # Try 1: Privileged Mode with Limits
     DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --privileged --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
+    if [ -c /dev/kvm ]; then DOCKER_CMD="$DOCKER_CMD --device /dev/kvm"; fi
+if [ "$MODE" != "unlimited" ]; then DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""; fi
+DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
+eval "$DOCKER_CMD" >/dev/null 2>&1
+if [ $? -eq 0 ]; then SUCCESS=true; fi
+
+# Try 2: Standard Capability Mode
+if [ "$SUCCESS" = false ]; then
+    DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --cap-add=SYS_ADMIN --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
     if [ -c /dev/kvm ]; then DOCKER_CMD="$DOCKER_CMD --device /dev/kvm"; fi
     if [ "$MODE" != "unlimited" ]; then DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""; fi
     DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
     eval "$DOCKER_CMD" >/dev/null 2>&1
     if [ $? -eq 0 ]; then SUCCESS=true; fi
+fi
 
-    # Attempt 2: Fallback - Drop --privileged flag, add SYS_ADMIN capability to bypass kernel runtime crash
-    if [ "$SUCCESS" = false ]; then
-        DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --cap-add=SYS_ADMIN --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
-        if [ -c /dev/kvm ]; then DOCKER_CMD="$DOCKER_CMD --device /dev/kvm"; fi
-        if [ "$MODE" != "unlimited" ]; then DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""; fi
-        DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
-        eval "$DOCKER_CMD" >/dev/null 2>&1
-        if [ $? -eq 0 ]; then SUCCESS=true; fi
-    fi 
+# Try 3: Safe Mode (Stripped down configs)
+if [ "$SUCCESS" = false ]; then
+    DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw \"$IMG\" /bin/bash"
+    eval "$DOCKER_CMD" >/dev/null 2>&1
+    if [ $? -eq 0 ]; then SUCCESS=true; fi
+fi
 
-    # Attempt 3: Safe Mode Fallback - Drop all rigid runtime resource configurations
-    if [ "$SUCCESS" = false ]; then
-        DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw \"$IMG\" /bin/bash"
-        eval "$DOCKER_CMD" >/dev/null 2>&1
-        if [ $? -eq 0 ]; then SUCCESS=true; fi
+if [ "$SUCCESS" = true ]; then
+    docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
+    
+    # Inject custom spoof signatures natively
+    if [ "$USE_SPOOF" = true ]; then
+        docker exec "$VM_NAME" /bin/bash -c "mkdir -p /etc/fake && cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/fake/cpuinfo" 2>/dev/null
+        docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/fake/cpuinfo #\"' >> /root/.bashrc" 2>/dev/null
+        docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/fake/cpuinfo; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
     fi
 
-    if [ "$SUCCESS" = true ]; then
-        # Inject user root pass authentication details
-        docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
-        
-        # Inject custom spoof signatures natively via shell overrides
-        if [ "$USE_SPOOF" = true ]; then
-            docker exec "$VM_NAME" /bin/bash -c "mkdir -p /etc/fake && cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/fake/cpuinfo" 2>/dev/null
-            docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/fake/cpuinfo #\"' >> /root/.bashrc" 2>/dev/null
-            docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/fake/cpuinfo; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
-        fi
+    # Branding updates
+    docker exec "$VM_NAME" /bin/bash -c "echo 'export VPS_HOST_BRAND=\"$VM_HOST_BRAND\"' >> /root/.bashrc" 2>/dev/null
+    docker exec "$VM_NAME" /bin/bash -c "sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME=\"Ubuntu 22.04.5 LTS (Powered by $VM_HOST_BRAND)\"/' /etc/os-release 2>/dev/null"
 
-        # Inject Custom Brand text metrics into environment profiles
-        docker exec "$VM_NAME" /bin/bash -c "echo 'export VPS_HOST_BRAND=\"$VM_HOST_BRAND\"' >> /root/.bashrc" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME=\"Ubuntu 22.04.5 LTS (Powered by $VM_HOST_BRAND)\"/' /etc/os-release 2>/dev/null"
-
-        echo -e " ${GREEN}VPS created successfully.${NC}"
-        sleep 1
-        manage_vm_menu "$VM_NAME"
-    else
-        echo -e " ${RED}Error: VPS creation failed. Check Docker status via systemctl status docker${NC}"
-        sleep 3
-    fi
+    echo -e " ${GREEN}VPS created successfully.${NC}"
+    sleep 1
+    manage_vm_menu "$VM_NAME"
+else
+    echo -e " ${RED}Error: VPS creation failed. Check Docker status via systemctl status docker${NC}"
+    sleep 3
+fi
 }
 
 # ==================================================
