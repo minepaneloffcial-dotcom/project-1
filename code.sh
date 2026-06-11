@@ -316,7 +316,6 @@ create_vm() {
         echo -e ""
         sleep 4
     fi
-}
 
 # ==================================================
 #            🔄 MAIN INTERFACE LOOP
