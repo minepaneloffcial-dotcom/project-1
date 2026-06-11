@@ -16,7 +16,7 @@ MAGENTA='\033[1;35m'
 # ==================================================
 #       🛰️ LICENSE GATEWAY PROXY
 # ==================================================
-LICENSE_SERVER_URL="https://githubusercontent.com"
+LICENSE_SERVER_URL="https://github.com/minepaneloffcial-dotcom/project-1/blob/main/license.key"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
 check_license() {
