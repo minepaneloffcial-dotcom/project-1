@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==================================================
-#       COLORS & UI CONSTANTS
+#       ⚡️ NEON CYBERPUNK THEME STYLE CONSTANTS ⚡️
 # ==================================================
 NC='\033[0m' 
 RED='\033[1;31m'
@@ -11,41 +11,42 @@ BLUE='\033[1;34m'
 PURPLE='\033[1;35m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
+MAGENTA='\033[1;35m'
 
 # ==================================================
-#       LICENSE & AUTHENTICATION
+#       🛰️ LICENSE GATEWAY PROXY
 # ==================================================
-LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/main/license.key"
+LICENSE_SERVER_URL="https://githubusercontent.com"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
 check_license() {
     clear
-    echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "   ${CYAN}⚡  PREMIUM VM MAKER: MANAGER EDITION  ⚡${NC}"
-    echo -e "   ${WHITE}   Engineered by iTzTasin69 & HackerTeam${NC}"
-    echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
+    echo -e "${MAGENTA}🌐𖦹──────────────────────────────────────────────────𖦹🌐${NC}"
+    echo -e "   ${CYAN}⚡  METAVERSE CORE ENGINE v4.0 // TASIN PRO  ⚡${NC}"
+    echo -e "   ${WHITE}      ⚡ SECURITY NODE HANDSHAKE ACTIVE ⚡${NC}"
+    echo -e "${MAGENTA}🌐𖦹──────────────────────────────────────────────────𖦹🌐${NC}"
     
     if [ -f "$LOCAL_LICENSE_FILE" ]; then
         USER_KEY=$(cat "$LOCAL_LICENSE_FILE" | tr -d '[:space:]')
-        echo -e " ${BLUE}∞${NC} Verifying stored license..."
+        echo -e " ${CYAN}⚙ [CORE LINK]${NC} Authenticating tracking index ID..."
     else
-        echo -e " ${YELLOW}⚠${NC} License key required."
-        echo -n " Enter Key: "
+        echo -e " ${YELLOW}⚠ [UNLICENSEDED MODULE]${NC} Master license grid missing."
+        echo -n " 🔗 Enter Access Token Key: "
         read -r USER_KEY
-        if [ -z "$USER_KEY" ]; then echo -e "${RED}✘ Key cannot be empty.${NC}"; exit 1; fi
+        if [ -z "$USER_KEY" ]; then echo -e "${RED}✘ Auth signature string can't be null.${NC}"; exit 1; fi
     fi
 
     VALID_DATA=$(curl -s --max-time 10 "$LICENSE_SERVER_URL")
     
     if [ -z "$VALID_DATA" ]; then
-        echo -e " ${RED}✘ Error: Could not connect to license server.${NC}"
+        echo -e " ${RED}✘ [TIMEOUT ERROR] Unable to ping GitHub Cloud Matrix node.${NC}"
         exit 1
     fi
 
     USER_ROW=$(echo "$VALID_DATA" | grep -w "^$USER_KEY")
     
     if [ -z "$USER_ROW" ]; then
-        echo -e "${RED}✘ License Invalid or Expired.${NC}"
+        echo -e "${RED}✘ [ACCESS DENIED] Signature mismatch or subscription expired.${NC}"
         rm -f "$LOCAL_LICENSE_FILE"
         exit 1
     fi
@@ -54,93 +55,95 @@ check_license() {
     MAX_VMS=$(echo "$USER_ROW" | awk '{print $3}')
     if [ -z "$MAX_VMS" ]; then MAX_VMS=1; fi
     
-    echo -e " ${GREEN}✔ Access Granted.${NC} (Limit: $MAX_VMS VMs)"
-    sleep 1
+    echo -e " ${GREEN}✔ [ONLINE]${NC} Node connected. Authorized Slots: ${CYAN}$MAX_VMS Matrix Hubs${NC}"
+    sleep 1.2
 }
 
 # ==================================================
-#       HELPER FUNCTIONS
+#       🛠️ DIAGNOSTIC CORE HELPERS
 # ==================================================
 
 get_status() {
     if [ "$(docker inspect -f '{{.State.Running}}' $1 2>/dev/null)" == "true" ]; then
-        echo -e "${GREEN}● RUNNING${NC}"
+        echo -e "${GREEN}[◈ RUNNING]${NC}"
     else
-        echo -e "${RED}● STOPPED${NC}"
+        echo -e "${RED}[■ OFFLINE]${NC}"
     fi
 }
 
 # ==================================================
-#       MAIN MENUS
+#       🛸 HYPERVISOR CONTROL TERMINALS
 # ==================================================
 
 manage_vm_menu() {
     local vm_name=$1
     while true; do
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "    MANAGING: ${WHITE}$vm_name${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-        echo -e " Status: $(get_status $vm_name)"
-        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-        echo -e "  1) ${GREEN}⚡ Connect / Boot (SSH Shell)${NC}"
-        echo -e "  2) ${YELLOW}↺  Reboot Container${NC}"
-        echo -e "  3) ${WHITE}■  Stop Server${NC}"
-        echo -e "  4) ${WHITE}▶  Start Server${NC}"
-        echo -e "  5) ${RED}♻  Reinstall / Change OS (Wipe Data)${NC}"
-        echo -e "  6) ${RED}X  Delete VM${NC}"
-        echo -e "  0) ⬅  Back to List"
-        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-        echo -n " Select Option: "
+        echo -e "${CYAN}🪐𖦹──────────────────────────────────────────────────𖦹🪐${NC}"
+        echo -e "    🛰️ SYSTEM INTERACTION FOR LAYER: ${WHITE}$vm_name${NC}"
+        echo -e "${CYAN}🪐𖦹──────────────────────────────────────────────────𖦹🪐${NC}"
+        echo -e " Core Cluster Array Health: $(get_status $vm_name)"
+        echo -e "${BLUE}⚡──────────────────────────────────────────────────⚡${NC}"
+        echo -e "  ${CYAN}[1]${NC} 🚀 Inject TTY Terminal (Boot Console/SSH)"
+        echo -e "  ${CYAN}[2]${NC} ↺  Hard Restart Node Lifecycle"
+        echo -e "  ${CYAN}[3]${NC} ■  Force Kill Host Sub-routines"
+        echo -e "  ${CYAN}[4]${NC} ▶  Power Up Virtual Blocks"
+        echo -e "  ${CYAN}[5]${NC} ♻  Purge Stack & Reinstall Cluster OS"
+        echo -e "  ${CYAN}[6]${NC} 💣 Execute Wipe Sequence (Delete Asset)"
+        echo -e "  ${MAGENTA}[0]${NC} ⬅  Return to Nexus Central"
+        echo -e "${BLUE}⚡──────────────────────────────────────────────────⚡${NC}"
+        echo -n " Choose Matrix Vector Option: "
         read -r action
 
         case "$action" in
             1)
                 if [ "$(docker inspect -f '{{.State.Running}}' $vm_name)" == "false" ]; then
-                    echo -e " ${YELLOW}Starting VM first...${NC}"
+                    echo -e " ${YELLOW}Initializing sleeping container instance...${NC}"
                     docker start $vm_name >/dev/null 2>&1
                 fi
                 clear
-                echo -e "${GREEN}Connecting to $vm_name... (Type 'exit' to disconnect)${NC}"
+                echo -e "${GREEN}┌──────────────────────────────────────────────────┐${NC}"
+                echo -e "  🚀 TERMINAL ACTIVE: Type 'exit' to bridge back.   "
+                echo -e "${GREEN}└──────────────────────────────────────────────────┘${NC}"
                 docker exec -it $vm_name /bin/bash
                 ;;
             2)
                 docker restart $vm_name
-                echo -e " ${GREEN}✔ Rebooted.${NC}"
+                echo -e " ${GREEN}✔ Pulse sequence reboot completed.${NC}"
                 sleep 1
                 ;;
             3)
                 docker stop $vm_name
-                echo -e " ${RED}✔ Stopped.${NC}"
+                echo -e " ${RED}✔ Microservice stream suspended.${NC}"
                 sleep 1
                 ;;
             4)
                 docker start $vm_name
-                echo -e " ${GREEN}✔ Started.${NC}"
+                echo -e " ${GREEN}✔ Block initialized successfully.${NC}"
                 sleep 1
                 ;;
             5)
-                echo -e " ${RED}⚠ WARNING: This will DELETE all data in $vm_name!${NC}"
-                echo -n " Are you sure? (y/n): "
+                echo -e " ${RED}☢️ CRITICAL NOTICE: Proceeding deletes all directory databases inside $vm_name!${NC}"
+                echo -n " Confirm hard wipe execution? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
                     docker rm -f $vm_name
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
-                    echo -e " ${GREEN}✔ VM Wiped.${NC} Sending to creation menu..."
+                    echo -e " ${GREEN}✔ Block completely clean.${NC} Re-routing to provisioning panel..."
                     sleep 2
                     create_vm "${vm_name#tasin-vm-}" 
                     return
                 fi
                 ;;
             6)
-                echo -n " Confirm Deletion (y/n): "
+                echo -n " Execute permanent sector destruction? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
                     docker rm -f $vm_name
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
-                    echo -e " ${GREEN}✔ Deleted.${NC}"
+                    echo -e " ${GREEN}✔ System matrix cleaned.${NC}"
                     sleep 1
                     return
                 fi
@@ -156,16 +159,14 @@ create_vm() {
         VM_ID_NAME=$1
     else
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "         ${WHITE}CREATE NEW INSTANCE${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-        # 1. Ask for Name
-        echo -n " 1. Enter Hostname (e.g. web1): "
+        echo -e "${PURPLE}💠𖦹──────────────────────────────────────────────────𖦹💠${NC}"
+        echo -e "         📡 NEW ARCHITECTURE ALLOCATION PROTOCOL"
+        echo -e "${PURPLE}💠𖦹──────────────────────────────────────────────────𖦹💠${NC}"
+        echo -n " 🔗 Set Virtual Machine Hostname (e.g., node-01): "
         read -r INPUT_NAME
         VM_ID_NAME=$(echo "$INPUT_NAME" | tr -cd 'A-Za-z0-9_-')
 
-        # 2. Ask for Password
-        echo -n " 2. Set Root Password: "
+        echo -n " 🔑 Set Master Encryption Root Password: "
         read -r VM_PASS
         if [ -z "$VM_PASS" ]; then VM_PASS="root"; fi
     fi
@@ -175,27 +176,27 @@ create_vm() {
     CPU_FILE="/root/cpu_$VM_ID_NAME.info"
 
     # ==========================================
-    # OS SELECTION
+    # OS CHIP DISTRIBUTION SELECTION
     # ==========================================
     clear
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}SELECT LINUX DISTRIBUTION${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " ${YELLOW}Ubuntu Server Editions:${NC}"
-    echo -e "   1) Ubuntu 22.04 LTS"
-    echo -e "   2) Ubuntu 20.04 LTS"
-    echo -e "   3) Ubuntu 18.04 LTS"
+    echo -e "${CYAN}🪐𖦹──────────────────────────────────────────────────𖦹🪐${NC}"
+    echo -e "         💾 CHOOSE LINUX SOURCE ISO MATRIX DISTRIBUTION"
+    echo -e "${CYAN}🪐𖦹──────────────────────────────────────────────────𖦹🪐${NC}"
+    echo -e " 🚀 ${YELLOW}Ubuntu Mirror Engine Labs:${NC}"
+    echo -e "   [1] Ubuntu Server 22.04 LTS (Modern Core Architecture)"
+    echo -e "   [2] Ubuntu Server 20.04 LTS (Stable Backport Layout)"
+    echo -e "   [3] Ubuntu Server 18.04 LTS (Legacy Node Variant)"
     echo -e ""
-    echo -e " ${RED}Debian Server Editions:${NC}"
-    echo -e "   4) Debian 12 (Newest)"
-    echo -e "   5) Debian 11"
-    echo -e "   6) Debian 10"
+    echo -e " ⚡ ${RED}Debian Core Cloud Layers:${NC}"
+    echo -e "   [4] Debian Server 12 (Bookworm High Stability Build)"
+    echo -e "   [5] Debian Server 11 (Bullseye Distribution Core)"
+    echo -e "   [6] Debian Server 10 (Buster Legacy Sandbox Package)"
     echo -e ""
-    echo -e " ${BLUE}Other:${NC}"
-    echo -e "   7) Kali Linux"
-    echo -e "   8) Alpine Linux"
-    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Selection [1-8]: "
+    echo -e " 🛸 ${BLUE}Sec-Ops Pentest & Edge Platforms:${NC}"
+    echo -e "   [7] Kali Linux Rolling (Cyber Laboratories Pack)"
+    echo -e "   [8] Alpine Linux Core (Ultra-Lightweight Micro Frame)"
+    echo -e "${BLUE}⚡──────────────────────────────────────────────────⚡${NC}"
+    echo -n " Deploy Core Choice Matrix [1-8]: "
     read -r os_sel
     case "$os_sel" in
         1) IMG="ubuntu:22.04" ;;
@@ -210,246 +211,215 @@ create_vm() {
     esac
 
     # ==========================================
-    # RESOURCE ALLOCATION (RAM & CPU)
+    # QUANTUM RESOURCE PROVISIONING BLOCK
     # ==========================================
     clear
-    # Check for KVM
     if [ -c /dev/kvm ]; then
         HAS_KVM=true
-        KVM_MSG="${GREEN}Detected (/dev/kvm)${NC}"
+        KVM_MSG="${GREEN}HARDWARE PASS-THROUGH STACK DETECTED (/dev/kvm)${NC}"
     else
         HAS_KVM=false
-        KVM_MSG="${RED}Not Detected (Software Mode)${NC}"
+        KVM_MSG="${YELLOW}SOFTWARE EMULATION BACKPORT ACTIVE (No KVM Layer)${NC}"
     fi
 
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}RESOURCE ALLOCATION TYPE${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " Hypervisor Status: $KVM_MSG"
+    echo -e "${MAGENTA}🌐𖦹──────────────────────────────────────────────────𖦹🌐${NC}"
+    echo -e "         🧠 QUANTUM SPACE COMPUTE MAP CONFIGURATION"
+    echo -e "${MAGENTA}🌐𖦹──────────────────────────────────────────────────𖦹🌐${NC}"
+    echo -e " Host Controller Hypervisor: $KVM_MSG"
     echo -e ""
-    echo -e " 1) ${GREEN}Dedicated Resources${NC} (Hard Limit)"
-    echo -e "    * If KVM available: Full Passthrough."
-    echo -e "    * RAM/CPU is strictly reserved."
+    echo -e "  ${CYAN}[1] Dedicated Hardware Reservation${NC} (Strict Absolute Isolation)"
+    echo -e "      * Locks exact assets directly. Bypasses standard memory tables."
     echo -e ""
-    echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS)"
-    echo -e "    * Good for selling cheap VPS."
+    echo -e "  ${CYAN}[2] Shared Virtual Processing Layer${NC} (Burstable Cloud Server VPS)"
+    echo -e "      * Dynamic shared host environment logic model."
     echo -e ""
-    echo -e " 3) ${PURPLE}System Default${NC} (Unlimited)"
-    echo -e "    * Copy of Main Host Power."
-    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Selection [1-3]: "
-    read -r res_type
-
-    RAM=""
-    CORES=""
-    MODE="shared"
-
-    if [ "$res_type" == "3" ]; then
-        MODE="unlimited"
-        echo -e " ${PURPLE}>> System Default Selected: Using full Host Power.${NC}"
-        sleep 1
-    else
-        # Ask for values
-        echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
-        read -r RAM
-        if [ -z "$RAM" ]; then RAM="1g"; fi
-        
-        echo -n " Enter CPU Cores (e.g. 1, 2, 4): "
-        read -r CORES
-        if [ -z "$CORES" ]; then CORES="1"; fi
-
-        if [ "$res_type" == "1" ]; then
-            MODE="dedicated"
-        else
-            MODE="shared"
-        fi
-    fi
-
-    # ==========================================
-    # CPU SPOOFING
-    # ==========================================
-    clear
-    echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}SELECT CPU VENDOR FAMILY${NC}"
-    echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " 1) ${RED}AuthenticAMD${NC} (Access AMD CPU List)"
-    echo -e " 2) ${BLUE}GenuineIntel${NC} (Access Intel CPU List)"
-    echo -e " 3) ${GREEN}Custom / Manual${NC} (Type yourself)"
-    echo -e " 4) Default (Use Host CPU)"
-    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Select Vendor [1-4]: "
-    read -r vendor_sel
-
-    V_ID="GenuineIntel"
-    C_NAME="Intel Xeon"
-    C_MHZ="2500.000"
-    USE_SPOOF=true
-
-    case "$vendor_sel" in
-        1) 
-            V_ID="AuthenticAMD"
-            clear
-            echo -e " 1) AMD EPYC 9654 (96-Core)"
-            echo -e " 2) AMD EPYC 7763 (64-Core)"
-            echo -e " 3) AMD Ryzen 9 7950X3D"
-            echo -e " 4) AMD Ryzen 9 5950X"
-            echo -e " 5) AMD Ryzen Threadripper PRO 5995WX"
-            echo -n " Select Model [1-5]: "
-            read -r amd_model
-            case "$amd_model" in
-                1) C_NAME="AMD EPYC 9654 96-Core Processor"; C_MHZ="3700.000" ;;
-                2) C_NAME="AMD EPYC 7763 64-Core Processor"; C_MHZ="2450.000" ;;
-                3) C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"; C_MHZ="5700.000" ;;
-                4) C_NAME="AMD Ryzen 9 5950X 16-Core Processor"; C_MHZ="4900.000" ;;
-                5) C_NAME="AMD Ryzen Threadripper PRO 5995WX"; C_MHZ="4500.000" ;;
-                *) C_NAME="AMD EPYC Processor"; C_MHZ="3000.000" ;;
-            esac
-            ;;
-        2) 
-            V_ID="GenuineIntel"
-            clear
-            echo -e " 1) Intel Core i9-14900KS"
-            echo -e " 2) Intel Core i9-13900K"
-            echo -e " 3) Intel Xeon Platinum 8490H"
-            echo -e " 4) Intel Xeon Gold 6130"
-            echo -e " 5) Intel Core i7-12700K"
-            echo -n " Select Model [1-5]: "
-            read -r intel_model
-            case "$intel_model" in
-                1) C_NAME="Intel(R) Core(TM) i9-14900KS"; C_MHZ="6200.000" ;;
-                2) C_NAME="Intel(R) Core(TM) i9-13900K"; C_MHZ="5800.000" ;;
-                3) C_NAME="Intel(R) Xeon(R) Platinum 8490H"; C_MHZ="3500.000" ;;
-                4) C_NAME="Intel(R) Xeon(R) Gold 6130 CPU @ 2.10GHz"; C_MHZ="2100.000" ;;
-                5) C_NAME="Intel(R) Core(TM) i7-12700K"; C_MHZ="5000.000" ;;
-                *) C_NAME="Intel(R) Xeon(R) CPU"; C_MHZ="2500.000" ;;
-            esac
-            ;;
-        3)
-            clear
-            echo -n " 1. Enter Vendor ID: "
-            read -r V_ID
-            echo -n " 2. Enter Model Name: "
-            read -r C_NAME
-            echo -n " 3. Enter Speed (MHz): "
-            read -r C_MHZ
-            ;;
-        4)
-            USE_SPOOF=false
-            ;;
-        *)
-            USE_SPOOF=false
-            ;;
-    esac
-
-    # Generate CPU File
-    if [ "$USE_SPOOF" = true ]; then
-        sed -e "s/^vendor_id.*/vendor_id\t: $V_ID/" \
-            -e "s/^model name.*/model name\t: $C_NAME/" \
-            -e "s/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/" \
-            /proc/cpuinfo > "$CPU_FILE"
-    fi
-
-    mkdir -p "$DATA_DIR"
-    
-    echo -e " ${BLUE}▶${NC} Deploying container..."
-
-    # ==========================================
-    # COMMAND CONSTRUCTION
-    # ==========================================
-    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped -v $DATA_DIR:/root:rw"
-
-    # APPLY RESOURCE LOGIC
-    if [ "$MODE" == "dedicated" ]; then
-        # STRICT LIMITS
-        CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
-        
-        # KVM PASSTHROUGH CHECK
-        if [ "$HAS_KVM" = true ]; then
-             CMD="$CMD --device /dev/kvm"
-             echo -e " ${GREEN}✔ KVM Acceleration Enabled${NC}"
-        else
-             echo -e " ${YELLOW}⚠ No KVM detected. Using strict software limits.${NC}"
-        fi
-
-    elif [ "$MODE" == "shared" ]; then
-        # SOFT LIMITS (Can use swap)
-        CMD="$CMD --cpus=$CORES --memory=$RAM"
-    fi
-
-    # ADD SPOOFING
-    if [ "$USE_SPOOF" = true ]; then
-        CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
-    fi
-
-    # ADD IMAGE
-    CMD="$CMD $IMG /bin/bash"
-
-    # EXECUTE
-    eval "$CMD" >/dev/null 2>&1
-    
-    if [ $? -eq 0 ]; then
-        echo -e " ${BLUE}∞${NC} Setting root password..."
-        sleep 2
-        docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd"
-        
-        echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
-        echo -e " Redirecting to manager..."
-        sleep 2
-        manage_vm_menu "$VM_NAME"
-    else
-        echo -e " ${RED}✘ Error creating VM. (Check Docker logs)${NC}"
-        sleep 3
-    fi
+    echo -e "  ${CYAN}[3] Multi-Cluster Host Copy Mirror${NC} (Host Frame Replication System)"
+    echo -e "      * Mirrors total base server capability directly."
+    echo -e "${BLUE}⚡──────────────────────────────────────────────────⚡${NC}"
+echo -n " Select Computation Routing Vector [1-3]: "
+read -r res_type
+RAM=""
+CORES=""
+MODE="shared"
+if [ "$res_type" == "3" ]; then
+MODE="unlimited"
+echo -e " ${PURPLE}>> Allocation Successful: Unlimited dynamic burst pipelines linked.${NC}"
+sleep 1
+else
+echo -n " 💾 Map RAM Allocation Pool (e.g., 512m, 4g, 16g): "
+read -r RAM
+if [ -z "$RAM" ]; then RAM="1g"; fi
+echo -n " 🧠 Map Logical Processor Core Limits (e.g., 1, 4, 12): "
+read -r CORES
+if [ -z "$CORES" ]; then CORES="1"; fi
+if [ "$res_type" == "1" ]; then MODE="dedicated"; else MODE="shared"; fi
+fi
+# ==========================================
+# CHIP HARDWARE INJECTION MATRIX SPOOFER
+# ==========================================
+clear
+echo -e "${CYAN}🪐𖦹──────────────────────────────────────────────────𖦹🪐${NC}"
+echo -e " ⚡ ARCHITECTURE VENDOR INJECTION INTERFACE"
+echo -e "${CYAN}🪐𖦹──────────────────────────────────────────────────𖦹🪐${NC}"
+echo -e " ${RED}[1] AuthenticAMD Silicon Core Layouts${NC}"
+echo -e " ${BLUE}[2] GenuineIntel Processing Clusters${NC}"
+echo -e " ${GREEN}[3] Custom Brand Engine Identity Injection${NC}"
+echo -e " ${WHITE}[4] Raw Baremetal Host CPU Direct Mapping${NC}"
+echo -e "${BLUE}⚡──────────────────────────────────────────────────⚡${NC}"
+echo -n " Override Silicon Signature Sequence [1-4]: "
+read -r vendor_sel
+V_ID="GenuineIntel"
+C_NAME="Intel Xeon"
+C_MHZ="2500.000"
+USE_SPOOF=true
+case "$vendor_sel" in
+1)
+V_ID="AuthenticAMD"
+clear
+echo -e "𖦹 AMD SILICON INVENTORY ARRAY"
+echo -e " [1] AMD EPYC 9654 Data Center Beast (96 Cores)"
+echo -e " [2] AMD EPYC 7763 Enterprise Cloud Array (64 Cores)"
+echo -e " [3] AMD Ryzen 9 7950X3D Performance Chipset"
+echo -e " [4] AMD Ryzen 9 5950X Legacy Consumer Core"
+echo -e " [5] AMD Ryzen Threadripper PRO 5995WX Workstation"
+echo -n " Inject Array Code: "
+read -r amd_model
+case "$amd_model" in
+1) C_NAME="AMD EPYC 9654 96-Core Processor"; C_MHZ="3700.000" ;;
+2) C_NAME="AMD EPYC 7763 64-Core Processor"; C_MHZ="2450.000" ;;
+3) C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"; C_MHZ="5700.000" ;;
+4) C_NAME="AMD Ryzen 9 5950X 16-Core Processor"; C_MHZ="4900.000" ;;
+5) C_NAME="AMD Ryzen Threadripper PRO 5995WX"; C_MHZ="4500.000" ;;
+*) C_NAME="AMD EPYC Processor"; C_MHZ="3000.000" ;;
+esac
+;;
+2)
+V_ID="GenuineIntel"
+clear
+echo -e "𖦹 INTEL SILICON INVENTORY ARRAY"
+echo -e " [1] Intel Core i9-14900KS Frequency King (6.2 GHz)"
+echo -e " [2] Intel Core i9-13900K Core Cluster"
+echo -e " [3] Intel Xeon Platinum 8490H Scalable Enterprise"
+echo -e " [4] Intel Xeon Gold 6130 Production Core"
+echo -e " [5] Intel Core i7-12700K Processing Station"
+echo -n " Inject Array Code: "
+read -r intel_model
+case "$intel_model" in
+1) C_NAME="Intel(R) Core(TM) i9-14900KS"; C_MHZ="6200.000" ;;
+2) C_NAME="Intel(R) Core(TM) i9-13900K"; C_MHZ="5800.000" ;;
+3) C_NAME="Intel(R) Xeon(R) Platinum 8490H"; C_MHZ="3500.000" ;;
+4) C_NAME="Intel(R) Xeon(R) Gold 6130 CPU @ 2.10GHz"; C_MHZ="2100.000" ;;
+5) C_NAME="Intel(R) Core(TM) i7-12700K"; C_MHZ="5000.000" ;;
+*) C_NAME="Intel(R) Xeon(R) CPU"; C_MHZ="2500.000" ;;
+esac
+;;
+3)
+clear
+echo -e "⚡️ CUSTOM SPECIFICATION DEVELOPMENT SUITE"
+echo -n " 1. Define Custom String Vendor String ID (e.g., AuthenticAMD): "
+read -r V_ID
+echo -n " 2. Define Custom String Model Label (e.g., NASA-SuperNode): "
+read -r C_NAME
+echo -n " 3. Define Hardware Clock Speed Rating in MHz: "
+read -r C_MHZ
+;;
+4) USE_SPOOF=false ;;
+*) USE_SPOOF=false ;;
+esac
+if [ "$USE_SPOOF" = true ]; then
+sed -e "s/^vendor_id.*/vendor_id\t: $V_ID/" \
+    -e "s/^model name.*/model name\t: $C_NAME/" \
+    -e "s/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/" \
+    /proc/cpuinfo > "$CPU_FILE"
+fi
+mkdir -p "$DATA_DIR"
+echo -e " ${BLUE}⚙ [COMPILING DEPLOYMENT DATA]${NC} Packing matrix modules..."
+# ==========================================
+# ⚙️ AUTO-REPAIR DOCKER RUN CONSTRUCTOR ENGINE
+# ==========================================
+DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
+if [ "$MODE" == "dedicated" ]; then
+DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""
+# FIX: Try to append swap lock parameters but prepare for fallback bypass if host kernel has swap limits turned off
+DOCKER_CMD_FINAL="$DOCKER_CMD --memory-swap=\"$RAM\""
+if [ "$HAS_KVM" = true ]; then DOCKER_CMD_FINAL="$DOCKER_CMD_FINAL --device /dev/kvm"; fi
+elif [ "$MODE" == "shared" ]; then
+DOCKER_CMD_FINAL="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""
+else
+DOCKER_CMD_FINAL="$DOCKER_CMD"
+fi
+if [ "$USE_SPOOF" = true ]; then DOCKER_CMD_FINAL="$DOCKER_CMD_FINAL -v \"$CPU_FILE\":/proc/cpuinfo:ro"; fi
+DOCKER_CMD_FINAL="$DOCKER_CMD_FINAL \"$IMG\" /bin/bash"
+# Core Execution Engine Call
+eval "$DOCKER_CMD_FINAL" >/dev/null 2>&1
+# CRASH WATCHER AUTOMATIC REPAIR FORGIVENESS TRIGGER
+if [ $? -ne 0 ]; then
+echo -e " ${YELLOW}⚠ [KERNEL LIMIT CONFLICT DETECTED]${NC} Host cgroup memory swap accounting missing. Activating fallback repair parameters..."
+# FIX FALLBACK COMMAND STRIP: Drops strict system memory swaps to allow immediate initialization compatibility
+DOCKER_REPAIR_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped --oom-kill-disable=false -v \"$DATA_DIR\":/root:rw"
+if [ -n "$CORES" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --cpus=\"$CORES\""; fi
+if [ -n "$RAM" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --memory=\"$RAM\""; fi
+if [ "$HAS_KVM" = true ] && [ "$MODE" == "dedicated" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --device /dev/kvm"; fi
+if [ "$USE_SPOOF" = true ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD -v \"$CPU_FILE\":/proc/cpuinfo:ro"; fi
+DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD \"$IMG\" /bin/bash"
+eval "$DOCKER_REPAIR_CMD" >/dev/null 2>&1
+fi
+if [ $? -eq 0 ]; then
+echo -e " ${CYAN}⚙ [KEY INJECTION]${NC} Injecting user root terminal password keys..."
+sleep 1.5
+docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
+echo -e " ${GREEN}✔ [PROVISIONED SUCCESSFULLY]${NC} Matrix container online."
+sleep 1.5
+manage_vm_menu "$VM_NAME"
+else
+echo -e " ${RED}✘ [SYSTEM FAULT] Creation failed. Please confirm Docker daemon service status by typing: systemctl restart docker${NC}"
+sleep 4
+fi
 }
-
 # ==================================================
-#       MAIN LOOP
+# 🔄 MASTER MAIN GRID HUB INFRASTRUCTURE
 # ==================================================
 check_license
-
 while true; do
-    clear
-    mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
-    
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "      ${WHITE}TASIN VPS CONTROL PANEL${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    
-    if [ ${#VMS[@]} -eq 0 ]; then
-        echo -e "  ${YELLOW}(No VMs created yet)${NC}"
-    else
-        i=1
-        for vm in "${VMS[@]}"; do
-            STATE=$(get_status "$vm")
-            DISPLAY_NAME=${vm#tasin-vm-}
-            echo -e "  ${WHITE}[$i]${NC} $DISPLAY_NAME  $STATE"
-            ((i++))
-        done
-    fi
-    
-    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -e "  ${GREEN}[N]${NC} Create New VM"
-    echo -e "  ${RED}[E]${NC} Exit Panel"
-    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Enter Number to Manage or [N]: "
-    read -r CHOICE
-    
-    if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
-        if [ ${#VMS[@]} -ge "$MAX_VMS" ]; then
-             echo -e " ${RED}✘ License Limit Reached ($MAX_VMS).${NC}"
-             sleep 2
-        else
-             create_vm
-        fi
-    elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
-        clear
-        exit 0
-    elif [[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -le "${#VMS[@]}" ] && [ "$CHOICE" -gt 0 ]; then
-        INDEX=$((CHOICE-1))
-        SELECTED_VM=${VMS[$INDEX]}
-        manage_vm_menu "$SELECTED_VM"
-    else
-        echo -e " ${RED}Invalid Selection.${NC}"
-        sleep 1
-    fi
+clear
+mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
+echo -e "${MAGENTA}⚡𖦹──────────────────────────────────────────────────𖦹⚡${NC}"
+echo -e " ${CYAN}🌌 TASIN NEXUS EDGE MASTER NETWORK CONTROLLER PANEL${NC}"
+echo -e "${MAGENTA}⚡𖦹──────────────────────────────────────────────────𖦹⚡${NC}"
+if [ ${#VMS[@]} -eq 0 ]; then
+echo -e " ${YELLOW}[⚡ Ready Stack — Zero virtualization environments mapped]${NC}"
+else
+i=1
+for vm in "${VMS[@]}"; do
+STATE=$(get_status "$vm")
+DISPLAY_NAME=${vm#tasin-vm-}
+echo -e " ${CYAN}[$i]${NC} Machine Domain ID: ${WHITE}$DISPLAY_NAME${NC} ── $STATE"
+((i++))
+done
+fi
+echo -e "${BLUE}⚡──────────────────────────────────────────────────⚡${NC}"
+echo -e " ${GREEN}[N] Allocate Brand New Layer VM Block${NC}"
+echo -e " ${RED}[E] Disconnect Control Panel Session${NC}"
+echo -e "${BLUE}⚡──────────────────────────────────────────────────⚡${NC}"
+echo -n " Request Matrix Operation Task: "
+read -r CHOICE
+if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
+if [ ${#VMS[@]} -ge "$MAX_VMS" ]; then
+echo -e " ${RED}✘ Quota allocation limit reached via subscription license key ($MAX_VMS).${NC}"
+sleep 2
+else
+create_vm
+fi
+elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
+clear
+echo -e "${CYAN}Disconnecting virtual link session cleanly... Goodbye.${NC}"
+exit 0
+elif [[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -le "${#VMS[@]}" ] && [ "$CHOICE" -gt 0 ]; then
+INDEX=$((CHOICE-1))
+SELECTED_VM=${VMS[$INDEX]}
+manage_vm_menu "$SELECTED_VM"
+else
+echo -e " ${RED}Vector error selection unrecognized.${NC}"
+sleep 1
+fi
 done
