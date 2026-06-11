@@ -15,9 +15,6 @@ WHITE='\033[1;37m'
 # ==================================================
 #       LICENSE & AUTHENTICATION
 # ==================================================
-LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/main/license.key"
-LOCAL_LICENSE_FILE="/root/.tasin_license"
-
 check_license() {
     clear
     echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
