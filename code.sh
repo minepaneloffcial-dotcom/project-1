@@ -13,49 +13,6 @@ CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 
 # ==================================================
-#       LICENSE & AUTHENTICATION
-# ==================================================
-check_license() {
-    clear
-    echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "   ${CYAN}⚡  PREMIUM VM MAKER: MANAGER EDITION  ⚡${NC}"
-    echo -e "   ${WHITE}   Engineered by iTzTasin69 & HackerTeam${NC}"
-    echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
-    
-    if [ -f "$LOCAL_LICENSE_FILE" ]; then
-        USER_KEY=$(cat "$LOCAL_LICENSE_FILE" | tr -d '[:space:]')
-        echo -e " ${BLUE}∞${NC} Verifying stored license..."
-    else
-        echo -e " ${YELLOW}⚠${NC} License key required."
-        echo -n " Enter Key: "
-        read -r USER_KEY
-        if [ -z "$USER_KEY" ]; then echo -e "${RED}✘ Key cannot be empty.${NC}"; exit 1; fi
-    fi
-
-    VALID_DATA=$(curl -s --max-time 10 "$LICENSE_SERVER_URL")
-    
-    if [ -z "$VALID_DATA" ]; then
-        echo -e " ${RED}✘ Error: Could not connect to license server.${NC}"
-        exit 1
-    fi
-
-    USER_ROW=$(echo "$VALID_DATA" | grep -w "^$USER_KEY")
-    
-    if [ -z "$USER_ROW" ]; then
-        echo -e "${RED}✘ License Invalid or Expired.${NC}"
-        rm -f "$LOCAL_LICENSE_FILE"
-        exit 1
-    fi
-    
-    echo "$USER_KEY" > "$LOCAL_LICENSE_FILE"
-    MAX_VMS=$(echo "$USER_ROW" | awk '{print $3}')
-    if [ -z "$MAX_VMS" ]; then MAX_VMS=1; fi
-    
-    echo -e " ${GREEN}✔ Access Granted.${NC} (Limit: $MAX_VMS VMs)"
-    sleep 1
-}
-
-# ==================================================
 #       HELPER FUNCTIONS
 # ==================================================
 
@@ -99,7 +56,12 @@ manage_vm_menu() {
                 fi
                 clear
                 echo -e "${GREEN}Connecting to $vm_name... (Type 'exit' to disconnect)${NC}"
-                docker exec -it $vm_name /bin/bash
+                # Auto-detect shell for Alpine vs Ubuntu/Debian
+                if docker exec $vm_name test -f /bin/bash >/dev/null 2>&1; then
+                    docker exec -it $vm_name /bin/bash
+                else
+                    docker exec -it $vm_name /bin/sh
+                fi
                 ;;
             2)
                 docker restart $vm_name
@@ -151,6 +113,13 @@ manage_vm_menu() {
 create_vm() {
     if [ -n "$1" ]; then
         VM_ID_NAME=$1
+        clear
+        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+        echo -e "         ${WHITE}REINSTALLING: ${VM_ID_NAME}${NC}"
+        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+        echo -n " Set New Root Password: "
+        read -r VM_PASS
+        if [ -z "$VM_PASS" ]; then VM_PASS="root"; fi
     else
         clear
         echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
@@ -194,6 +163,8 @@ create_vm() {
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -n " Selection [1-8]: "
     read -r os_sel
+    
+    VM_SHELL="/bin/bash"
     case "$os_sel" in
         1) IMG="ubuntu:22.04" ;;
         2) IMG="ubuntu:20.04" ;;
@@ -202,9 +173,20 @@ create_vm() {
         5) IMG="debian:11" ;;
         6) IMG="debian:10" ;;
         7) IMG="kalilinux/kali-rolling:latest" ;;
-        8) IMG="alpine:latest" ;;
+        8) IMG="alpine:latest"; VM_SHELL="/bin/sh" ;;
         *) IMG="ubuntu:22.04" ;;
     esac
+
+    # ==========================================
+    # VPS HOST PROVIDER
+    # ==========================================
+    clear
+    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}SET VPS HOST PROVIDER${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " This will be displayed when users connect via SSH."
+    echo -n " Enter Provider Name (e.g. Cryzon Cloud Host Ltd.): "
+    read -r VPS_HOST
 
     # ==========================================
     # RESOURCE ALLOCATION (RAM & CPU)
@@ -250,10 +232,12 @@ create_vm() {
         echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
         read -r RAM
         if [ -z "$RAM" ]; then RAM="1g"; fi
+        RAM=$(echo "$RAM" | tr -d '[:space:]') # Remove accidental spaces
         
         echo -n " Enter CPU Cores (e.g. 1, 2, 4): "
         read -r CORES
         if [ -z "$CORES" ]; then CORES="1"; fi
+        CORES=$(echo "$CORES" | tr -d '[:space:]') # Remove accidental spaces
 
         if [ "$res_type" == "1" ]; then
             MODE="dedicated"
@@ -329,6 +313,9 @@ create_vm() {
             read -r C_NAME
             echo -n " 3. Enter Speed (MHz): "
             read -r C_MHZ
+            if [ -z "$V_ID" ]; then V_ID="GenuineIntel"; fi
+            if [ -z "$C_NAME" ]; then C_NAME="Custom CPU"; fi
+            if [ -z "$C_MHZ" ]; then C_MHZ="2500.000"; fi
             ;;
         4)
             USE_SPOOF=false
@@ -340,10 +327,17 @@ create_vm() {
 
     # Generate CPU File
     if [ "$USE_SPOOF" = true ]; then
-        sed -e "s/^vendor_id.*/vendor_id\t: $V_ID/" \
-            -e "s/^model name.*/model name\t: $C_NAME/" \
-            -e "s/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/" \
-            /proc/cpuinfo > "$CPU_FILE"
+        # Remove any leftover directory or file from previous failed attempts
+        rm -f "$CPU_FILE"
+        
+        # Using awk is safer than sed for handling special characters (like /, &, etc)
+        # that the user might type in Custom CPU mode.
+        awk -v vid="$V_ID" -v cname="$C_NAME" -v cmhz="$C_MHZ" '
+        /^vendor_id/ { print "vendor_id\t: " vid; next }
+        /^model name/ { print "model name\t: " cname; next }
+        /^cpu MHz/ { print "cpu MHz\t\t: " cmhz; next }
+        { print }
+        ' /proc/cpuinfo > "$CPU_FILE"
     fi
 
     mkdir -p "$DATA_DIR"
@@ -378,8 +372,8 @@ create_vm() {
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # ADD IMAGE
-    CMD="$CMD $IMG /bin/bash"
+    # ADD IMAGE AND SHELL (Fix for Alpine crash)
+    CMD="$CMD $IMG $VM_SHELL"
 
     # EXECUTE
     eval "$CMD" >/dev/null 2>&1
@@ -387,14 +381,25 @@ create_vm() {
     if [ $? -eq 0 ]; then
         echo -e " ${BLUE}∞${NC} Setting root password..."
         sleep 2
-        docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd"
+        # Pass password safely via STDIN to avoid shell injection/breaking on special chars
+        echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
+        
+        # Set VPS Host in MOTD
+        if [ -n "$VPS_HOST" ]; then
+            echo -e " ${BLUE}∞${NC} Applying VPS Host..."
+            docker exec "$VM_NAME" $VM_SHELL -c "echo '' > /etc/motd"
+            printf "  ============================================\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
+            printf "   Welcome to %s\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
+            printf "  ============================================\n\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
+        fi
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
         echo -e " Redirecting to manager..."
         sleep 2
         manage_vm_menu "$VM_NAME"
     else
-        echo -e " ${RED}✘ Error creating VM. (Check Docker logs)${NC}"
+        echo -e " ${RED}✘ [SYSTEM FAULT] Creation failed.${NC}"
+        echo -e " ${YELLOW}Tip: Confirm Docker daemon service status by typing: systemctl restart docker${NC}"
         sleep 3
     fi
 }
@@ -402,7 +407,6 @@ create_vm() {
 # ==================================================
 #       MAIN LOOP
 # ==================================================
-check_license
 
 while true; do
     clear
@@ -432,12 +436,7 @@ while true; do
     read -r CHOICE
     
     if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
-        if [ ${#VMS[@]} -ge "$MAX_VMS" ]; then
-             echo -e " ${RED}✘ License Limit Reached ($MAX_VMS).${NC}"
-             sleep 2
-        else
-             create_vm
-        fi
+         create_vm
     elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
         clear
         exit 0
