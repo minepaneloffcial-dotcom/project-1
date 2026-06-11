@@ -156,6 +156,10 @@ create_vm() {
         echo -n " Enter Root Password: "
         read -r VM_PASS
         if [ -z "$VM_PASS" ]; then VM_PASS="root"; fi
+        
+        echo -n " Enter Cloud Host Brand (e.g., Cryzon Cloud Host Ltd.): "
+        read -r VM_HOST_BRAND
+        if [ -z "$VM_HOST_BRAND" ]; then VM_HOST_BRAND="Cryzon Cloud Host Ltd."; fi
     fi
 
     VM_NAME="tasin-vm-$VM_ID_NAME"
@@ -225,7 +229,7 @@ create_vm() {
     fi
 
     # ==========================================
-    # CPU SPOOFER SELECTION (FIXED METHOD)
+    # CPU SELECTION MENU
     # ==========================================
     clear
     echo -e "${CYAN}==================================================${NC}"
@@ -258,63 +262,61 @@ create_vm() {
 
     mkdir -p "$DATA_DIR"
 
-    # Build robust run architecture command configurations
-    DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
+    # Base Docker command using KVM device loops directly
+    DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --privileged --restart unless-stopped -v \"$DATA_DIR\":/root:rw"
+
+    if [ -c /dev/kvm ]; then
+        DOCKER_CMD="$DOCKER_CMD --device /dev/kvm"
+    fi
 
     if [ "$MODE" == "dedicated" ]; then
-        DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\" --memory-swap=\"$RAM\""
-        if [ -c /dev/kvm ]; then DOCKER_CMD="$DOCKER_CMD --device /dev/kvm"; fi
+        DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""
     elif [ "$MODE" == "shared" ]; then
         DOCKER_CMD="$DOCKER_CMD --cpus=\"$CORES\" --memory=\"$RAM\""
     fi
 
     DOCKER_CMD="$DOCKER_CMD \"$IMG\" /bin/bash"
 
-    # Initialize Deploy
     eval "$DOCKER_CMD" >/dev/null 2>&1
-    
-    # KERNEL FALLBACK REPAIR
-    if [ $? -ne 0 ]; then
-        DOCKER_REPAIR_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped --oom-kill-disable=false -v \"$DATA_DIR\":/root:rw"
-        if [ -n "$CORES" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --cpus=\"$CORES\""; fi
-if [ -n "$RAM" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --memory=\"$RAM\""; fi
-if [ -c /dev/kvm ] && [ "$MODE" == "dedicated" ]; then DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD --device /dev/kvm"; fi
-DOCKER_REPAIR_CMD="$DOCKER_REPAIR_CMD \"$IMG\" /bin/bash"
 
-eval "$DOCKER_REPAIR_CMD" >/dev/null 2>&1
-fi
+    if [ $? -eq 0 ]; then
+        # Inject standard auth credentials
+        docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
+        
+        # Inject custom spoof signatures natively via interactive loop overrides
+        if [ "$USE_SPOOF" = true ]; then
+            docker exec "$VM_NAME" /bin/bash -c "mkdir -p /etc/fake && cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/fake/cpuinfo" 2>/dev/null
+            docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/fake/cpuinfo #\"' >> /root/.bashrc" 2>/dev/null
+            docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/fake/cpuinfo; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
+        fi
 
-if [ $? -eq 0 ]; then
-    # Configuration setup inside container environment logic
-    docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
-    
-    # FIXED USER SPOOFING WORKAROUND PIPELINE
-    if [ "$USE_SPOOF" = true ]; then
-        docker exec "$VM_NAME" /bin/bash -c "cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/cpuinfo.mock" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/cpuinfo.mock #\"' >> /root/.bashrc" 2>/dev/null
-        docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/cpuinfo.mock; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
+        # Inject Custom Brand Text into the container's environment profiles
+        docker exec "$VM_NAME" /bin/bash -c "echo 'export VPS_HOST_BRAND=\"$VM_HOST_BRAND\"' >> /root/.bashrc" 2>/dev/null
+        docker exec "$VM_NAME" /bin/bash -c "sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME=\"Ubuntu 22.04.5 LTS (Powered by $VM_HOST_BRAND)\"/' /etc/os-release 2>/dev/null"
+
+        echo -e " ${GREEN}VPS created successfully.${NC}"
+        sleep 1
+        manage_vm_menu "$VM_NAME"
+    else
+        echo -e " ${RED}Error: VPS creation failed. Check Docker status via systemctl status docker${NC}"
+        sleep 3
     fi
-    echo -e " ${GREEN}VPS created successfully.${NC}"
-    sleep 1
-    manage_vm_menu "$VM_NAME"
-else
-    echo -e " ${RED}Error: VPS creation failed. Check Docker status via systemctl status docker${NC}"
-    sleep 3
-fi
 }
 
 # ==================================================
-#            🔄 MAIN INTERFACE LOOP
+#       🔄 MAIN ENGINE HOME INTERFACE LOOP
 # ==================================================
 check_license
 
 while true; do
     clear
     mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
+    
     echo -e "${CYAN}==================================================${NC}"
     echo -e "               MASTER VPS CONTROLLER              "
     echo -e "${CYAN}==================================================${NC}"
     echo ""
+    
     if [ ${#VMS[@]} -eq 0 ]; then
         echo -e "   No active VPS containers found."
     else
@@ -326,6 +328,7 @@ while true; do
             ((i++))
         done
     fi
+    
     echo ""
     echo -e "${CYAN}==================================================${NC}"
     echo -e "  [N] Create VPS"
@@ -333,7 +336,7 @@ while true; do
     echo -e "${CYAN}==================================================${NC}"
     echo -n " Enter option choice: "
     read -r CHOICE
-
+    
     if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
         if [ ${#VMS[@]} -ge "$MAX_VMS" ]; then
              echo -e " ${RED}Error: VPS quota limit reached ($MAX_VMS max).${NC}"
