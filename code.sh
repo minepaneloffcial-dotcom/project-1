@@ -213,36 +213,60 @@ create_vm() {
     # RESOURCE ALLOCATION (RAM & CPU)
     # ==========================================
     clear
+    # Check for KVM
+    if [ -c /dev/kvm ]; then
+        HAS_KVM=true
+        KVM_MSG="${GREEN}Detected (/dev/kvm)${NC}"
+    else
+        HAS_KVM=false
+        KVM_MSG="${RED}Not Detected (Software Mode)${NC}"
+    fi
+
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}RESOURCE ALLOCATION TYPE${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " 1) ${GREEN}Dedicated Resources${NC} (Guaranteed Hard Limit)"
-    echo -e " 2) ${YELLOW}Shared / Burstable${NC} (Standard Limit)"
-    echo -e " 3) ${PURPLE}System Default${NC} (Unlimited / Copy Main Host)"
+    echo -e " Hypervisor Status: $KVM_MSG"
+    echo -e ""
+    echo -e " 1) ${GREEN}Dedicated Resources${NC} (Hard Limit)"
+    echo -e "    * If KVM available: Full Passthrough."
+    echo -e "    * RAM/CPU is strictly reserved."
+    echo -e ""
+    echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS)"
+    echo -e "    * Good for selling cheap VPS."
+    echo -e ""
+    echo -e " 3) ${PURPLE}System Default${NC} (Unlimited)"
+    echo -e "    * Copy of Main Host Power."
+    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -n " Selection [1-3]: "
     read -r res_type
 
     RAM=""
     CORES=""
-    USE_LIMITS=true
+    MODE="shared"
 
     if [ "$res_type" == "3" ]; then
-        USE_LIMITS=false
+        MODE="unlimited"
         echo -e " ${PURPLE}>> System Default Selected: Using full Host Power.${NC}"
         sleep 1
     else
-        # Ask for values if not default
-        echo -n " Enter RAM Amount (e.g. 1g, 4g, 8g): "
+        # Ask for values
+        echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
         read -r RAM
         if [ -z "$RAM" ]; then RAM="1g"; fi
         
         echo -n " Enter CPU Cores (e.g. 1, 2, 4): "
         read -r CORES
         if [ -z "$CORES" ]; then CORES="1"; fi
+
+        if [ "$res_type" == "1" ]; then
+            MODE="dedicated"
+        else
+            MODE="shared"
+        fi
     fi
 
     # ==========================================
-    # CPU SPOOFING (Step 1 - Vendor)
+    # CPU SPOOFING
     # ==========================================
     clear
     echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
@@ -256,7 +280,6 @@ create_vm() {
     echo -n " Select Vendor [1-4]: "
     read -r vendor_sel
 
-    # Defaults
     V_ID="GenuineIntel"
     C_NAME="Intel Xeon"
     C_MHZ="2500.000"
@@ -264,12 +287,8 @@ create_vm() {
 
     case "$vendor_sel" in
         1) 
-            # AMD SPECIFIC
             V_ID="AuthenticAMD"
             clear
-            echo -e "${RED}┌──────────────────────────────────────────────────┐${NC}"
-            echo -e "         ${WHITE}SELECT AMD PROCESSOR${NC}"
-            echo -e "${RED}└──────────────────────────────────────────────────┘${NC}"
             echo -e " 1) AMD EPYC 9654 (96-Core)"
             echo -e " 2) AMD EPYC 7763 (64-Core)"
             echo -e " 3) AMD Ryzen 9 7950X3D"
@@ -287,12 +306,8 @@ create_vm() {
             esac
             ;;
         2) 
-            # INTEL SPECIFIC
             V_ID="GenuineIntel"
             clear
-            echo -e "${BLUE}┌──────────────────────────────────────────────────┐${NC}"
-            echo -e "         ${WHITE}SELECT INTEL PROCESSOR${NC}"
-            echo -e "${BLUE}└──────────────────────────────────────────────────┘${NC}"
             echo -e " 1) Intel Core i9-14900KS"
             echo -e " 2) Intel Core i9-13900K"
             echo -e " 3) Intel Xeon Platinum 8490H"
@@ -310,12 +325,8 @@ create_vm() {
             esac
             ;;
         3)
-            # CUSTOM
             clear
-            echo -e "${GREEN}┌──────────────────────────────────────────────────┐${NC}"
-            echo -e "         ${WHITE}CUSTOM CPU BUILDER${NC}"
-            echo -e "${GREEN}└──────────────────────────────────────────────────┘${NC}"
-            echo -n " 1. Enter Vendor ID (e.g. AuthenticAMD): "
+            echo -n " 1. Enter Vendor ID: "
             read -r V_ID
             echo -n " 2. Enter Model Name: "
             read -r C_NAME
@@ -342,28 +353,43 @@ create_vm() {
     
     echo -e " ${BLUE}▶${NC} Deploying container..."
 
-    # BUILD DOCKER COMMAND STRING
+    # ==========================================
+    # COMMAND CONSTRUCTION
+    # ==========================================
     CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped -v $DATA_DIR:/root:rw"
 
-    # Add Limits if NOT "System Default"
-    if [ "$USE_LIMITS" = true ]; then
+    # APPLY RESOURCE LOGIC
+    if [ "$MODE" == "dedicated" ]; then
+        # STRICT LIMITS
+        CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
+        
+        # KVM PASSTHROUGH CHECK
+        if [ "$HAS_KVM" = true ]; then
+             CMD="$CMD --device /dev/kvm"
+             echo -e " ${GREEN}✔ KVM Acceleration Enabled${NC}"
+        else
+             echo -e " ${YELLOW}⚠ No KVM detected. Using strict software limits.${NC}"
+        fi
+
+    elif [ "$MODE" == "shared" ]; then
+        # SOFT LIMITS (Can use swap)
         CMD="$CMD --cpus=$CORES --memory=$RAM"
     fi
 
-    # Add Spoofing if Enabled
+    # ADD SPOOFING
     if [ "$USE_SPOOF" = true ]; then
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # Add Image
+    # ADD IMAGE
     CMD="$CMD $IMG /bin/bash"
 
-    # Execute
+    # EXECUTE
     eval "$CMD" >/dev/null 2>&1
     
     if [ $? -eq 0 ]; then
-        # SET PASSWORD
         echo -e " ${BLUE}∞${NC} Setting root password..."
+        sleep 2
         docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd"
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
@@ -371,7 +397,7 @@ create_vm() {
         sleep 2
         manage_vm_menu "$VM_NAME"
     else
-        echo -e " ${RED}✘ Error creating VM. (Check Docker/Storage)${NC}"
+        echo -e " ${RED}✘ Error creating VM. (Check Docker logs)${NC}"
         sleep 3
     fi
 }
