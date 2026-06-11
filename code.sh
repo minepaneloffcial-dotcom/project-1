@@ -159,9 +159,15 @@ create_vm() {
         echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
         echo -e "         ${WHITE}CREATE NEW INSTANCE${NC}"
         echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-        echo -n " Enter Name (e.g. web1, db2): "
+        # 1. Ask for Name
+        echo -n " 1. Enter Hostname (e.g. web1): "
         read -r INPUT_NAME
         VM_ID_NAME=$(echo "$INPUT_NAME" | tr -cd 'A-Za-z0-9_-')
+
+        # 2. Ask for Password
+        echo -n " 2. Set Root Password: "
+        read -r VM_PASS
+        if [ -z "$VM_PASS" ]; then VM_PASS="root"; fi
     fi
 
     VM_NAME="tasin-vm-$VM_ID_NAME"
@@ -169,7 +175,7 @@ create_vm() {
     CPU_FILE="/root/cpu_$VM_ID_NAME.info"
 
     # ==========================================
-    # 1. OS SELECTION (Includes OLD Versions)
+    # OS SELECTION
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
@@ -177,13 +183,13 @@ create_vm() {
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
     echo -e " ${YELLOW}Ubuntu Server Editions:${NC}"
     echo -e "   1) Ubuntu 22.04 LTS"
-    echo -e "   2) Ubuntu 20.04 LTS (Old Stable)"
-    echo -e "   3) Ubuntu 18.04 LTS (Legacy)"
+    echo -e "   2) Ubuntu 20.04 LTS"
+    echo -e "   3) Ubuntu 18.04 LTS"
     echo -e ""
     echo -e " ${RED}Debian Server Editions:${NC}"
     echo -e "   4) Debian 12 (Newest)"
-    echo -e "   5) Debian 11 (Bullseye)"
-    echo -e "   6) Debian 10 (Buster)"
+    echo -e "   5) Debian 11"
+    echo -e "   6) Debian 10"
     echo -e ""
     echo -e " ${BLUE}Other:${NC}"
     echo -e "   7) Kali Linux"
@@ -204,22 +210,39 @@ create_vm() {
     esac
 
     # ==========================================
-    # 2. HARDWARE RESOURCES
+    # RESOURCE ALLOCATION (RAM & CPU)
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}CONFIGURE RESOURCES${NC}"
+    echo -e "         ${WHITE}RESOURCE ALLOCATION TYPE${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -n " RAM Limit (e.g. 512m, 2g, 8g): "
-    read -r RAM
-    if [ -z "$RAM" ]; then RAM="2g"; fi
-    
-    echo -n " CPU Cores (e.g. 1, 4, 8): "
-    read -r CORES
-    if [ -z "$CORES" ]; then CORES="2"; fi
+    echo -e " 1) ${GREEN}Dedicated Resources${NC} (Guaranteed Hard Limit)"
+    echo -e " 2) ${YELLOW}Shared / Burstable${NC} (Standard Limit)"
+    echo -e " 3) ${PURPLE}System Default${NC} (Unlimited / Copy Main Host)"
+    echo -n " Selection [1-3]: "
+    read -r res_type
+
+    RAM=""
+    CORES=""
+    USE_LIMITS=true
+
+    if [ "$res_type" == "3" ]; then
+        USE_LIMITS=false
+        echo -e " ${PURPLE}>> System Default Selected: Using full Host Power.${NC}"
+        sleep 1
+    else
+        # Ask for values if not default
+        echo -n " Enter RAM Amount (e.g. 1g, 4g, 8g): "
+        read -r RAM
+        if [ -z "$RAM" ]; then RAM="1g"; fi
+        
+        echo -n " Enter CPU Cores (e.g. 1, 2, 4): "
+        read -r CORES
+        if [ -z "$CORES" ]; then CORES="1"; fi
+    fi
 
     # ==========================================
-    # 3. CPU FAMILY SELECTION (Step 1)
+    # CPU SPOOFING (Step 1 - Vendor)
     # ==========================================
     clear
     echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
@@ -241,9 +264,7 @@ create_vm() {
 
     case "$vendor_sel" in
         1) 
-            # ==================================
-            # AMD SPECIFIC LIST (Step 2 - AMD)
-            # ==================================
+            # AMD SPECIFIC
             V_ID="AuthenticAMD"
             clear
             echo -e "${RED}┌──────────────────────────────────────────────────┐${NC}"
@@ -251,66 +272,54 @@ create_vm() {
             echo -e "${RED}└──────────────────────────────────────────────────┘${NC}"
             echo -e " 1) AMD EPYC 9654 (96-Core)"
             echo -e " 2) AMD EPYC 7763 (64-Core)"
-            echo -e " 3) AMD EPYC 7742 (64-Core)"
-            echo -e " 4) AMD Ryzen 9 7950X3D (Gaming)"
-            echo -e " 5) AMD Ryzen 9 5950X"
-            echo -e " 6) AMD Ryzen Threadripper PRO 5995WX"
-            echo -e " 7) AMD Opteron 6380 (Legacy)"
-            echo -n " Select Model [1-7]: "
+            echo -e " 3) AMD Ryzen 9 7950X3D"
+            echo -e " 4) AMD Ryzen 9 5950X"
+            echo -e " 5) AMD Ryzen Threadripper PRO 5995WX"
+            echo -n " Select Model [1-5]: "
             read -r amd_model
             case "$amd_model" in
                 1) C_NAME="AMD EPYC 9654 96-Core Processor"; C_MHZ="3700.000" ;;
                 2) C_NAME="AMD EPYC 7763 64-Core Processor"; C_MHZ="2450.000" ;;
-                3) C_NAME="AMD EPYC 7742 64-Core Processor"; C_MHZ="2250.000" ;;
-                4) C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"; C_MHZ="5700.000" ;;
-                5) C_NAME="AMD Ryzen 9 5950X 16-Core Processor"; C_MHZ="4900.000" ;;
-                6) C_NAME="AMD Ryzen Threadripper PRO 5995WX"; C_MHZ="4500.000" ;;
-                7) C_NAME="AMD Opteron(tm) Processor 6380"; C_MHZ="2500.000" ;;
+                3) C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"; C_MHZ="5700.000" ;;
+                4) C_NAME="AMD Ryzen 9 5950X 16-Core Processor"; C_MHZ="4900.000" ;;
+                5) C_NAME="AMD Ryzen Threadripper PRO 5995WX"; C_MHZ="4500.000" ;;
                 *) C_NAME="AMD EPYC Processor"; C_MHZ="3000.000" ;;
             esac
             ;;
         2) 
-            # ==================================
-            # INTEL SPECIFIC LIST (Step 2 - Intel)
-            # ==================================
+            # INTEL SPECIFIC
             V_ID="GenuineIntel"
             clear
             echo -e "${BLUE}┌──────────────────────────────────────────────────┐${NC}"
             echo -e "         ${WHITE}SELECT INTEL PROCESSOR${NC}"
             echo -e "${BLUE}└──────────────────────────────────────────────────┘${NC}"
-            echo -e " 1) Intel Core i9-14900KS (6.2 GHz)"
+            echo -e " 1) Intel Core i9-14900KS"
             echo -e " 2) Intel Core i9-13900K"
             echo -e " 3) Intel Xeon Platinum 8490H"
             echo -e " 4) Intel Xeon Gold 6130"
-            echo -e " 5) Intel Xeon E5-2699 v4"
-            echo -e " 6) Intel Core i7-12700K"
-            echo -e " 7) Intel Core i5-12400F"
-            echo -n " Select Model [1-7]: "
+            echo -e " 5) Intel Core i7-12700K"
+            echo -n " Select Model [1-5]: "
             read -r intel_model
             case "$intel_model" in
                 1) C_NAME="Intel(R) Core(TM) i9-14900KS"; C_MHZ="6200.000" ;;
                 2) C_NAME="Intel(R) Core(TM) i9-13900K"; C_MHZ="5800.000" ;;
                 3) C_NAME="Intel(R) Xeon(R) Platinum 8490H"; C_MHZ="3500.000" ;;
                 4) C_NAME="Intel(R) Xeon(R) Gold 6130 CPU @ 2.10GHz"; C_MHZ="2100.000" ;;
-                5) C_NAME="Intel(R) Xeon(R) CPU E5-2699 v4 @ 2.20GHz"; C_MHZ="2200.000" ;;
-                6) C_NAME="Intel(R) Core(TM) i7-12700K"; C_MHZ="5000.000" ;;
-                7) C_NAME="Intel(R) Core(TM) i5-12400F"; C_MHZ="4400.000" ;;
+                5) C_NAME="Intel(R) Core(TM) i7-12700K"; C_MHZ="5000.000" ;;
                 *) C_NAME="Intel(R) Xeon(R) CPU"; C_MHZ="2500.000" ;;
             esac
             ;;
         3)
-            # ==================================
-            # CUSTOM MAKER (Step 2 - Custom)
-            # ==================================
+            # CUSTOM
             clear
             echo -e "${GREEN}┌──────────────────────────────────────────────────┐${NC}"
             echo -e "         ${WHITE}CUSTOM CPU BUILDER${NC}"
             echo -e "${GREEN}└──────────────────────────────────────────────────┘${NC}"
             echo -n " 1. Enter Vendor ID (e.g. AuthenticAMD): "
             read -r V_ID
-            echo -n " 2. Enter Model Name (e.g. NASA SuperComputer): "
+            echo -n " 2. Enter Model Name: "
             read -r C_NAME
-            echo -n " 3. Enter Speed in MHz (e.g. 9999.999): "
+            echo -n " 3. Enter Speed (MHz): "
             read -r C_MHZ
             ;;
         4)
@@ -332,36 +341,37 @@ create_vm() {
     mkdir -p "$DATA_DIR"
     
     echo -e " ${BLUE}▶${NC} Deploying container..."
-    
-    # DOCKER RUN
-    if [ "$USE_SPOOF" = true ]; then
-        docker run -dt \
-            --name "$VM_NAME" \
-            --hostname "$VM_ID_NAME" \
-            --cpus="$CORES" \
-            --memory="$RAM" \
-            --restart unless-stopped \
-            -v "$DATA_DIR":/root:rw \
-            -v "$CPU_FILE":/proc/cpuinfo:ro \
-            "$IMG" /bin/bash >/dev/null
-    else
-        docker run -dt \
-            --name "$VM_NAME" \
-            --hostname "$VM_ID_NAME" \
-            --cpus="$CORES" \
-            --memory="$RAM" \
-            --restart unless-stopped \
-            -v "$DATA_DIR":/root:rw \
-            "$IMG" /bin/bash >/dev/null
+
+    # BUILD DOCKER COMMAND STRING
+    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped -v $DATA_DIR:/root:rw"
+
+    # Add Limits if NOT "System Default"
+    if [ "$USE_LIMITS" = true ]; then
+        CMD="$CMD --cpus=$CORES --memory=$RAM"
     fi
+
+    # Add Spoofing if Enabled
+    if [ "$USE_SPOOF" = true ]; then
+        CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
+    fi
+
+    # Add Image
+    CMD="$CMD $IMG /bin/bash"
+
+    # Execute
+    eval "$CMD" >/dev/null 2>&1
     
     if [ $? -eq 0 ]; then
+        # SET PASSWORD
+        echo -e " ${BLUE}∞${NC} Setting root password..."
+        docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd"
+        
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
         echo -e " Redirecting to manager..."
         sleep 2
         manage_vm_menu "$VM_NAME"
     else
-        echo -e " ${RED}✘ Error creating VM.${NC}"
+        echo -e " ${RED}✘ Error creating VM. (Check Docker/Storage)${NC}"
         sleep 3
     fi
 }
