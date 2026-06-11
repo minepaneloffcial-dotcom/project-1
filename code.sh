@@ -11,6 +11,7 @@ BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 
+# FIXED REPOSITORY TREE URL PATHWAY
 LICENSE_SERVER_URL="https://raw.githubusercontent.com/minepaneloffcial-dotcom/project-1/refs/heads/main/license.key"
 LOCAL_LICENSE_FILE="/root/.tasin_license"
 
@@ -31,7 +32,12 @@ check_license() {
         if [ -z "$USER_KEY" ]; then echo -e "${RED} Error: Key cannot be empty.${NC}"; exit 1; fi
     fi
 
-    VALID_DATA=$(curl -s --max-time 10 "$LICENSE_SERVER_URL")
+    # NETWORK FALLBACK FETCH MATRIX Engine
+    if command -v curl >/dev/null 2>&1; then
+        VALID_DATA=$(curl -sL --max-time 15 "$LICENSE_SERVER_URL")
+    else
+        VALID_DATA=$(wget -qO- --timeout=15 "$LICENSE_SERVER_URL")
+    fi
     
     if [ -z "$VALID_DATA" ]; then
         echo -e " ${RED}Error: Server unreachable.${NC}"
@@ -165,9 +171,6 @@ create_vm() {
     VM_NAME="tasin-vm-$VM_ID_NAME"
     DATA_DIR="/root/docker_data_$VM_ID_NAME"
 
-    # ==========================================
-    # 🔥 FIX: AUTO-PURGE DEAD NAME CONFLICTS
-    # ==========================================
     if [ "$(docker ps -a -q -f name=^${VM_NAME}$)" ]; then
         echo -e " ${YELLOW}Cleaning up old container conflicts...${NC}"
         docker rm -f "$VM_NAME" >/dev/null 2>&1
@@ -270,9 +273,6 @@ create_vm() {
 
     mkdir -p "$DATA_DIR"
 
-    # ==========================================
-    # ⚙️ MULTI-TRY CAPABILITY REPAIR LOGIC
-    # ==========================================
     SUCCESS=false
 
     # Try 1: Privileged Mode with Limits
@@ -293,7 +293,7 @@ if [ "$SUCCESS" = false ]; then
     if [ $? -eq 0 ]; then SUCCESS=true; fi
 fi
 
-# Try 3: Safe Mode (Stripped down configs)
+# Try 3: Safe Mode
 if [ "$SUCCESS" = false ]; then
     DOCKER_CMD="docker run -dt --name \"$VM_NAME\" --hostname \"$VM_ID_NAME\" --restart unless-stopped -v \"$DATA_DIR\":/root:rw \"$IMG\" /bin/bash"
     eval "$DOCKER_CMD" >/dev/null 2>&1
@@ -303,14 +303,12 @@ fi
 if [ "$SUCCESS" = true ]; then
     docker exec "$VM_NAME" /bin/bash -c "echo 'root:$VM_PASS' | chpasswd" 2>/dev/null
     
-    # Inject custom spoof signatures natively
     if [ "$USE_SPOOF" = true ]; then
         docker exec "$VM_NAME" /bin/bash -c "mkdir -p /etc/fake && cat /proc/cpuinfo | sed -e 's/^vendor_id.*/vendor_id\t: $V_ID/' -e 's/^model name.*/model name\t: $C_NAME/' -e 's/^cpu MHz.*/cpu MHz\t\t: $C_MHZ/' > /etc/fake/cpuinfo" 2>/dev/null
         docker exec "$VM_NAME" /bin/bash -c "echo 'alias cat=\"cat /etc/fake/cpuinfo #\"' >> /root/.bashrc" 2>/dev/null
         docker exec "$VM_NAME" /bin/bash -c "echo 'cat() { if [ \"\$1\" = \"/proc/cpuinfo\" ]; then command cat /etc/fake/cpuinfo; else command cat \"\$@\"; fi; }' >> /root/.bashrc" 2>/dev/null
     fi
 
-    # Branding updates
     docker exec "$VM_NAME" /bin/bash -c "echo 'export VPS_HOST_BRAND=\"$VM_HOST_BRAND\"' >> /root/.bashrc" 2>/dev/null
     docker exec "$VM_NAME" /bin/bash -c "sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME=\"Ubuntu 22.04.5 LTS (Powered by $VM_HOST_BRAND)\"/' /etc/os-release 2>/dev/null"
 
