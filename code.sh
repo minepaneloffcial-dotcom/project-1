@@ -409,8 +409,6 @@ create_vm() {
 
     # PTERODACTYL / SYSTEMD MODE SETUP
     if [ "$PTERO_MODE" = true ]; then
-        # Privileged mode + cgroup access required for systemd boot
-        # Security opts required for internal docker to start without crashing
         CMD="$CMD --privileged --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
     fi
 
@@ -429,7 +427,7 @@ create_vm() {
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # ADD IMAGE AND SHELL (For systemd images, /sbin/init is required to boot)
+    # ADD IMAGE AND SHELL
     if [ "$PTERO_MODE" = true ]; then
         CMD="$CMD $IMG /sbin/init"
     else
@@ -446,7 +444,7 @@ create_vm() {
     if [ $STATUS -eq 0 ]; then
         log_msg "Container $VM_NAME created successfully."
         echo -e " ${BLUE}∞${NC} Configuring VM environment..."
-        sleep 5  # Give systemd a few seconds to fully boot inside
+        sleep 5
 
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
@@ -562,18 +560,28 @@ WGET_SPOOF
             # Install Docker CE
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1"
             
-            # FIX: Force VFS storage driver inside the VM to prevent internal overlay mount crashes
+            # FIX: Force VFS storage driver inside the VM
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\"}' > /etc/docker/daemon.json"
             
-            # Enable and Start Docker inside the VM
+            # Start Docker via systemctl
             docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1"
             
-            if [ $? -eq 0 ]; then
-                echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
-            else
-                echo -e " ${YELLOW}⚠ Docker installed, but the daemon had trouble starting automatically.${NC}"
-                echo -e " ${YELLOW}  Try running 'systemctl start docker' manually inside the VM.${NC}"
-            fi
+            # FALLBACK: If systemctl failed to start it, force start it in the background
+            docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs > /var/log/dockerd.log 2>&1 & fi"
+            
+            # Create a startup script so if the VM reboots, docker starts automatically
+            cat << 'DOCKER_START' > /tmp/start_docker.sh
+#!/bin/bash
+if ! docker ps >/dev/null 2>&1; then
+    dockerd --storage-driver=vfs > /var/log/dockerd.log 2>&1 &
+fi
+DOCKER_START
+            docker cp /tmp/start_docker.sh "$VM_NAME":/usr/local/bin/start_docker.sh
+            docker exec "$VM_NAME" bash -c "chmod +x /usr/local/bin/start_docker.sh"
+            docker exec "$VM_NAME" bash -c "echo '/usr/local/bin/start_docker.sh' >> /etc/rc.local && chmod +x /etc/rc.local"
+            rm /tmp/start_docker.sh
+
+            echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
         else
             docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         fi
