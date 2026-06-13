@@ -54,8 +54,6 @@ fix_docker() {
         systemctl stop containerd >/dev/null 2>&1
         
         mkdir -p /etc/docker
-        
-        # Overwrite daemon.json to force VFS
         echo '{ "storage-driver": "vfs" }' > /etc/docker/daemon.json
         
         systemctl start containerd >/dev/null 2>&1
@@ -238,18 +236,18 @@ create_vm() {
     read -r VPS_HOST
 
     # ==========================================
-    # NETWORK CONFIGURATION (MACVLAN)
+    # NETWORK CONFIGURATION
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}NETWORK CONFIGURATION${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
     echo -e " 1) ${GREEN}NAT (Shared Host IP)${NC}"
-    echo -e "    * Uses main server IP. Port forwarding required for services."
+    echo -e "    * VM shares server IP. curl ifconfig.me shows your Host IP."
     echo -e ""
     echo -e " 2) ${YELLOW}Dedicated IP (MacVLAN)${NC}"
-    echo -e "    * Gives VM its own real Public IP."
-    echo -e "    * Requires IPs routed to your server from datacenter."
+    echo -e "    * Gives VM its own Public IP (Requires additional IPs from provider)."
+    echo -e "    * ${RED}WARNING: DO NOT enter your server's main IP here!${NC}"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -n " Selection [1-2]: "
     read -r net_sel
@@ -261,11 +259,11 @@ create_vm() {
 
     if [ "$net_sel" == "2" ]; then
         NET_MODE="macvlan"
-        echo -n " Enter Subnet (e.g. 192.168.1.0/24 or 34.41.119.0/24): "
+        echo -n " Enter Subnet (e.g. 103.186.52.0/24): "
         read -r MACVLAN_SUBNET
-        echo -n " Enter Gateway (e.g. 192.168.1.1 or 34.41.119.1): "
+        echo -n " Enter Gateway (e.g. 103.186.52.1): "
         read -r MACVLAN_GW
-        echo -n " Enter Dedicated IP for this VM (e.g. 34.41.119.50): "
+        echo -n " Enter Dedicated IP for this VM (e.g. 103.186.52.164): "
         read -r MACVLAN_IP
         
         if [ -z "$MACVLAN_SUBNET" ] || [ -z "$MACVLAN_GW" ] || [ -z "$MACVLAN_IP" ]; then
@@ -273,6 +271,8 @@ create_vm() {
             NET_MODE="nat"
             sleep 2
         fi
+    else
+        NET_MODE="nat"
     fi
 
     # ==========================================
@@ -436,9 +436,6 @@ create_vm() {
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
         if [ "$HAS_KVM" = true ]; then
              CMD="$CMD --device /dev/kvm"
-             echo -e " ${GREEN}✔ KVM Acceleration Enabled${NC}"
-        else
-             echo -e " ${YELLOW}⚠ No KVM detected. Using strict software limits.${NC}"
         fi
     elif [ "$MODE" == "shared" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM"
@@ -452,13 +449,24 @@ create_vm() {
     # APPLY NETWORK LOGIC
     if [ "$NET_MODE" == "macvlan" ]; then
         docker network rm "net_$VM_NAME" >/dev/null 2>&1
-        docker network create -d macvlan \
+        
+        # Attempt to create MacVLAN Network, capture errors
+        NET_CREATE_ERR=$(docker network create -d macvlan \
             --subnet="$MACVLAN_SUBNET" \
             --gateway="$MACVLAN_GW" \
             -o parent=eth0 \
-            "net_$VM_NAME" >/dev/null 2>&1
-            
-        CMD="$CMD --network net_$VM_NAME --ip $MACVLAN_IP"
+            "net_$VM_NAME" 2>&1)
+        
+        if [ $? -ne 0 ]; then
+            echo -e " ${RED}✘ MacVLAN Network Creation Failed!${NC}"
+            echo -e " ${YELLOW}Docker Error: $NET_CREATE_ERR${NC}"
+            echo -e " ${YELLOW}Falling back to NAT (Shared Host IP).${NC}"
+            log_msg "MacVLAN creation failed: $NET_CREATE_ERR"
+            NET_MODE="nat"
+            sleep 3
+        else
+            CMD="$CMD --network net_$VM_NAME --ip $MACVLAN_IP"
+        fi
     fi
 
     # ADD IMAGE AND SHELL
@@ -506,7 +514,6 @@ create_vm() {
         echo -e " ${WHITE}$DOCKER_ERR${NC}"
         echo -e " ${YELLOW}──────────────────────────────────────────────────${NC}"
         
-        # Detect the specific OverlayFS error and provide the fix
         if echo "$DOCKER_ERR" | grep -qi "overlay\|invalid argument"; then
              echo -e " ${CYAN}ℹ SUGGESTION: Your server doesn't support Docker's default overlayfs."
              echo -e " Return to the main menu and select ${GREEN}[F] Fix Docker (OverlayFS Error)${NC} to resolve this permanently.${NC}"
