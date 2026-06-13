@@ -409,7 +409,9 @@ create_vm() {
 
     # PTERODACTYL / SYSTEMD MODE SETUP
     if [ "$PTERO_MODE" = true ]; then
-        CMD="$CMD --privileged -v /sys/fs/cgroup:/sys/fs/cgroup:ro -v /var/run/docker.sock:/var/run/docker.sock"
+        # Privileged mode + cgroup access required for systemd boot
+        # Security opts required for internal docker to start without crashing
+        CMD="$CMD --privileged --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
     fi
 
     # APPLY RESOURCE LOGIC
@@ -548,8 +550,30 @@ WGET_SPOOF
 
         # 5. Install Packages & Pterodactyl Docker
         if [ "$PTERO_MODE" = true ]; then
-            echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (This may take a minute)..."
-            docker exec "$VM_NAME" $VM_SHELL -c "apt-get update -qq && apt-get install -y -qq curl wget iproute2 neofetch >/dev/null 2>&1 && curl -fsSL https://get.docker.com | bash >/dev/null 2>&1"
+            echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
+            
+            # Install Dependencies
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 >/dev/null 2>&1"
+            
+            # Add Docker Official Repo
+            docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >/dev/null 2>&1"
+            docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
+            
+            # Install Docker CE
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1"
+            
+            # FIX: Force VFS storage driver inside the VM to prevent internal overlay mount crashes
+            docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\"}' > /etc/docker/daemon.json"
+            
+            # Enable and Start Docker inside the VM
+            docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1"
+            
+            if [ $? -eq 0 ]; then
+                echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
+            else
+                echo -e " ${YELLOW}⚠ Docker installed, but the daemon had trouble starting automatically.${NC}"
+                echo -e " ${YELLOW}  Try running 'systemctl start docker' manually inside the VM.${NC}"
+            fi
         else
             docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         fi
