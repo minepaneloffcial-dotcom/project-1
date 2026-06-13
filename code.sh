@@ -56,7 +56,6 @@ manage_vm_menu() {
                 fi
                 clear
                 echo -e "${GREEN}Connecting to $vm_name... (Type 'exit' to disconnect)${NC}"
-                # Auto-detect shell for Alpine vs Ubuntu/Debian
                 if docker exec $vm_name test -f /bin/bash >/dev/null 2>&1; then
                     docker exec -it $vm_name /bin/bash
                 else
@@ -83,6 +82,8 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
+                    # Also remove macvlan network if it exists
+                    docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
@@ -96,6 +97,7 @@ manage_vm_menu() {
                 echo -n " Confirm Deletion (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
+                    docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
@@ -125,12 +127,10 @@ create_vm() {
         echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
         echo -e "         ${WHITE}CREATE NEW INSTANCE${NC}"
         echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-        # 1. Ask for Name
         echo -n " 1. Enter Hostname (e.g. web1): "
         read -r INPUT_NAME
         VM_ID_NAME=$(echo "$INPUT_NAME" | tr -cd 'A-Za-z0-9_-')
 
-        # 2. Ask for Password
         echo -n " 2. Set Root Password: "
         read -r VM_PASS
         if [ -z "$VM_PASS" ]; then VM_PASS="root"; fi
@@ -184,15 +184,52 @@ create_vm() {
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}SET VPS HOST PROVIDER${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " This will be displayed when users connect via SSH."
+    echo -e " This will be displayed in neofetch and SSH MOTD."
     echo -n " Enter Provider Name (e.g. Cryzon Cloud Host Ltd.): "
     read -r VPS_HOST
+
+    # ==========================================
+    # NETWORK CONFIGURATION (IP SPOOFING / MACVLAN)
+    # ==========================================
+    clear
+    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}NETWORK CONFIGURATION${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " 1) ${GREEN}NAT (Shared Host IP)${NC}"
+    echo -e "    * Uses main server IP. Port forwarding required for services."
+    echo -e ""
+    echo -e " 2) ${YELLOW}Dedicated IP (MacVLAN)${NC}"
+    echo -e "    * Gives VM its own real Public IP."
+    echo -e "    * Requires IPs routed to your server from datacenter."
+    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+    echo -n " Selection [1-2]: "
+    read -r net_sel
+
+    NET_MODE="nat"
+    MACVLAN_IP=""
+    MACVLAN_GW=""
+    MACVLAN_SUBNET=""
+
+    if [ "$net_sel" == "2" ]; then
+        NET_MODE="macvlan"
+        echo -n " Enter Subnet (e.g. 192.168.1.0/24 or 34.41.119.0/24): "
+        read -r MACVLAN_SUBNET
+        echo -n " Enter Gateway (e.g. 192.168.1.1 or 34.41.119.1): "
+        read -r MACVLAN_GW
+        echo -n " Enter Dedicated IP for this VM (e.g. 34.41.119.50): "
+        read -r MACVLAN_IP
+        
+        if [ -z "$MACVLAN_SUBNET" ] || [ -z "$MACVLAN_GW" ] || [ -z "$MACVLAN_IP" ]; then
+            echo -e " ${RED}✘ Missing MacVLAN info. Falling back to NAT.${NC}"
+            NET_MODE="nat"
+            sleep 2
+        fi
+    fi
 
     # ==========================================
     # RESOURCE ALLOCATION (RAM & CPU)
     # ==========================================
     clear
-    # Check for KVM
     if [ -c /dev/kvm ]; then
         HAS_KVM=true
         KVM_MSG="${GREEN}Detected (/dev/kvm)${NC}"
@@ -207,14 +244,8 @@ create_vm() {
     echo -e " Hypervisor Status: $KVM_MSG"
     echo -e ""
     echo -e " 1) ${GREEN}Dedicated Resources${NC} (Hard Limit)"
-    echo -e "    * If KVM available: Full Passthrough."
-    echo -e "    * RAM/CPU is strictly reserved."
-    echo -e ""
     echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS)"
-    echo -e "    * Good for selling cheap VPS."
-    echo -e ""
     echo -e " 3) ${PURPLE}System Default${NC} (Unlimited)"
-    echo -e "    * Copy of Main Host Power."
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -n " Selection [1-3]: "
     read -r res_type
@@ -228,16 +259,15 @@ create_vm() {
         echo -e " ${PURPLE}>> System Default Selected: Using full Host Power.${NC}"
         sleep 1
     else
-        # Ask for values
         echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
         read -r RAM
         if [ -z "$RAM" ]; then RAM="1g"; fi
-        RAM=$(echo "$RAM" | tr -d '[:space:]') # Remove accidental spaces
+        RAM=$(echo "$RAM" | tr -d '[:space:]')
         
         echo -n " Enter CPU Cores (e.g. 1, 2, 4): "
         read -r CORES
         if [ -z "$CORES" ]; then CORES="1"; fi
-        CORES=$(echo "$CORES" | tr -d '[:space:]') # Remove accidental spaces
+        CORES=$(echo "$CORES" | tr -d '[:space:]')
 
         if [ "$res_type" == "1" ]; then
             MODE="dedicated"
@@ -253,9 +283,9 @@ create_vm() {
     echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}SELECT CPU VENDOR FAMILY${NC}"
     echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " 1) ${RED}AuthenticAMD${NC} (Access AMD CPU List)"
-    echo -e " 2) ${BLUE}GenuineIntel${NC} (Access Intel CPU List)"
-    echo -e " 3) ${GREEN}Custom / Manual${NC} (Type yourself)"
+    echo -e " 1) ${RED}AuthenticAMD${NC}"
+    echo -e " 2) ${BLUE}GenuineIntel${NC}"
+    echo -e " 3) ${GREEN}Custom / Manual${NC}"
     echo -e " 4) Default (Use Host CPU)"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -n " Select Vendor [1-4]: "
@@ -327,10 +357,7 @@ create_vm() {
 
     # Generate CPU File
     if [ "$USE_SPOOF" = true ]; then
-        # Remove any leftover directory or file from previous failed attempts
         rm -rf "$CPU_FILE"
-        
-        # Using awk is safer than sed for handling special characters (like /, &, etc)
         awk -v vid="$V_ID" -v cname="$C_NAME" -v cmhz="$C_MHZ" '
         /^vendor_id/ { print "vendor_id\t: " vid; next }
         /^model name/ { print "model name\t: " cname; next }
@@ -338,7 +365,6 @@ create_vm() {
         { print }
         ' /proc/cpuinfo > "$CPU_FILE"
         
-        # Verify the CPU file was created properly
         if [ ! -f "$CPU_FILE" ] || [ ! -s "$CPU_FILE" ]; then
             echo -e " ${RED}✘ Failed to generate CPU spoof file. Reverting to Default CPU.${NC}"
             USE_SPOOF=false
@@ -347,8 +373,6 @@ create_vm() {
     fi
 
     mkdir -p "$DATA_DIR"
-    
-    # Remove any pre-existing container with the same name to avoid "name already in use" errors
     docker rm -f "$VM_NAME" >/dev/null 2>&1
     
     echo -e " ${BLUE}▶${NC} Deploying container..."
@@ -360,25 +384,33 @@ create_vm() {
 
     # APPLY RESOURCE LOGIC
     if [ "$MODE" == "dedicated" ]; then
-        # STRICT LIMITS
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
-        
-        # KVM PASSTHROUGH CHECK
         if [ "$HAS_KVM" = true ]; then
              CMD="$CMD --device /dev/kvm"
              echo -e " ${GREEN}✔ KVM Acceleration Enabled${NC}"
         else
              echo -e " ${YELLOW}⚠ No KVM detected. Using strict software limits.${NC}"
         fi
-
     elif [ "$MODE" == "shared" ]; then
-        # SOFT LIMITS (Can use swap)
         CMD="$CMD --cpus=$CORES --memory=$RAM"
     fi
 
     # ADD SPOOFING
     if [ "$USE_SPOOF" = true ]; then
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
+    fi
+
+    # APPLY NETWORK LOGIC
+    if [ "$NET_MODE" == "macvlan" ]; then
+        # Create a dedicated macvlan network for this VM
+        docker network rm "net_$VM_NAME" >/dev/null 2>&1
+        docker network create -d macvlan \
+            --subnet="$MACVLAN_SUBNET" \
+            --gateway="$MACVLAN_GW" \
+            -o parent=eth0 \
+            "net_$VM_NAME" >/dev/null 2>&1
+            
+        CMD="$CMD --network net_$VM_NAME --ip $MACVLAN_IP"
     fi
 
     # ADD IMAGE AND SHELL
@@ -388,23 +420,34 @@ create_vm() {
     DOCKER_ERR=$(eval "$CMD" 2>&1)
     
     if [ $? -eq 0 ]; then
-        echo -e " ${BLUE}∞${NC} Setting root password..."
+        echo -e " ${BLUE}∞${NC} Configuring VM environment..."
         sleep 2
-        # Pass password safely via STDIN
+
+        # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
         
-        # Set VPS Host in MOTD
+        # 2. Set VPS Host in MOTD & Neofetch
         if [ -n "$VPS_HOST" ]; then
-            echo -e " ${BLUE}∞${NC} Applying VPS Host..."
+            # MOTD Setup
             docker exec "$VM_NAME" $VM_SHELL -c "echo '' > /etc/motd"
             printf "  ============================================\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
             printf "   Welcome to %s\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
             printf "  ============================================\n\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
+            
+            # Neofetch Host Override Setup
+            docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
+            printf "host=\"%s\"\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat > /root/.config/neofetch/config.conf"
+            printf "host=\"%s\"\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat > /etc/skel/.config/neofetch/config.conf"
         fi
+
+        # 3. Auto-install essential VPS packages (neofetch, curl, iproute2)
+        # Running this in the background via nohup so it doesn't freeze the menu for 30 seconds
+        docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl iproute2 >/dev/null 2>&1 && apk add neofetch curl iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
+        echo -e " ${YELLOW}Note: VPS packages (neofetch, curl) are installing in the background.${NC}"
         echo -e " Redirecting to manager..."
-        sleep 2
+        sleep 3
         manage_vm_menu "$VM_NAME"
     else
         echo -e " ${RED}✘ [SYSTEM FAULT] Creation failed.${NC}"
@@ -412,8 +455,8 @@ create_vm() {
         echo -e " ${WHITE}$DOCKER_ERR${NC}"
         echo -e " ${YELLOW}Tip: Confirm Docker daemon service status by typing: systemctl restart docker${NC}"
         
-        # Cleanup failed container remnants if it partially started
         docker rm -f "$VM_NAME" >/dev/null 2>&1
+        docker network rm "net_$VM_NAME" >/dev/null 2>&1
         sleep 4
     fi
 }
