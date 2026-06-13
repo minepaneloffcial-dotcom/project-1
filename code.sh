@@ -13,6 +13,15 @@ CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 
 # ==================================================
+#       LOG FILE SETUP
+# ==================================================
+LOG_FILE="/root/vm_manager.log"
+
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+# ==================================================
 #       HELPER FUNCTIONS
 # ==================================================
 
@@ -21,6 +30,45 @@ get_status() {
         echo -e "${GREEN}● RUNNING${NC}"
     else
         echo -e "${RED}● STOPPED${NC}"
+    fi
+}
+
+# ==================================================
+#       DOCKER FIX (OVERLAYFS ERROR)
+# ==================================================
+
+fix_docker() {
+    clear
+    echo -e "${YELLOW}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "    ${WHITE}DOCKER OVERLAYFS REPAIR TOOL${NC}"
+    echo -e "${YELLOW}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " ${RED}Error:${NC} 'overlayfs' or 'invalid argument' occurs on OpenVZ/LXC VPS."
+    echo -e " ${GREEN}Fix:${NC} Switch Docker storage driver to 'vfs' (100% compatible)."
+    echo -e ""
+    echo -n " Do you want to apply this fix? (y/n): "
+    read -r confirm
+    
+    if [ "$confirm" == "y" ]; then
+        log_msg "Applying Docker VFS Fix..."
+        systemctl stop docker >/dev/null 2>&1
+        systemctl stop containerd >/dev/null 2>&1
+        
+        mkdir -p /etc/docker
+        
+        # Overwrite daemon.json to force VFS
+        echo '{ "storage-driver": "vfs" }' > /etc/docker/daemon.json
+        
+        systemctl start containerd >/dev/null 2>&1
+        systemctl start docker >/dev/null 2>&1
+        
+        if systemctl is-active --quiet docker; then
+            echo -e " ${GREEN}✔ Docker fixed and restarted successfully!${NC}"
+            log_msg "Docker VFS Fix applied successfully."
+        else
+            echo -e " ${RED}✘ Docker failed to start. Check 'systemctl status docker'.${NC}"
+            log_msg "Docker VFS Fix FAILED."
+        fi
+        sleep 3
     fi
 }
 
@@ -82,11 +130,11 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
-                    # Also remove macvlan network if it exists
                     docker network rm "net_${vm_name}" >/dev/null 2>&1
-                    docker rm -f $vm_name
+                    docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
+                    log_msg "VM Wiped: $vm_name"
                     echo -e " ${GREEN}✔ VM Wiped.${NC} Sending to creation menu..."
                     sleep 2
                     create_vm "${vm_name#tasin-vm-}" 
@@ -98,9 +146,10 @@ manage_vm_menu() {
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
                     docker network rm "net_${vm_name}" >/dev/null 2>&1
-                    docker rm -f $vm_name
+                    docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
+                    log_msg "VM Deleted: $vm_name"
                     echo -e " ${GREEN}✔ Deleted.${NC}"
                     sleep 1
                     return
@@ -189,7 +238,7 @@ create_vm() {
     read -r VPS_HOST
 
     # ==========================================
-    # NETWORK CONFIGURATION (IP SPOOFING / MACVLAN)
+    # NETWORK CONFIGURATION (MACVLAN)
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
@@ -402,7 +451,6 @@ create_vm() {
 
     # APPLY NETWORK LOGIC
     if [ "$NET_MODE" == "macvlan" ]; then
-        # Create a dedicated macvlan network for this VM
         docker network rm "net_$VM_NAME" >/dev/null 2>&1
         docker network create -d macvlan \
             --subnet="$MACVLAN_SUBNET" \
@@ -416,10 +464,15 @@ create_vm() {
     # ADD IMAGE AND SHELL
     CMD="$CMD $IMG $VM_SHELL"
 
-    # EXECUTE AND CAPTURE DOCKER ERRORS
+    # ==========================================
+    # EXECUTE AND LOG
+    # ==========================================
+    log_msg "Executing: $CMD"
     DOCKER_ERR=$(eval "$CMD" 2>&1)
+    STATUS=$?
     
-    if [ $? -eq 0 ]; then
+    if [ $STATUS -eq 0 ]; then
+        log_msg "Container $VM_NAME created successfully."
         echo -e " ${BLUE}∞${NC} Configuring VM environment..."
         sleep 2
 
@@ -428,20 +481,17 @@ create_vm() {
         
         # 2. Set VPS Host in MOTD & Neofetch
         if [ -n "$VPS_HOST" ]; then
-            # MOTD Setup
             docker exec "$VM_NAME" $VM_SHELL -c "echo '' > /etc/motd"
             printf "  ============================================\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
             printf "   Welcome to %s\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
             printf "  ============================================\n\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
             
-            # Neofetch Host Override Setup
             docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
             printf "host=\"%s\"\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat > /root/.config/neofetch/config.conf"
             printf "host=\"%s\"\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat > /etc/skel/.config/neofetch/config.conf"
         fi
 
-        # 3. Auto-install essential VPS packages (neofetch, curl, iproute2)
-        # Running this in the background via nohup so it doesn't freeze the menu for 30 seconds
+        # 3. Auto-install VPS packages (neofetch, curl)
         docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl iproute2 >/dev/null 2>&1 && apk add neofetch curl iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
@@ -450,14 +500,23 @@ create_vm() {
         sleep 3
         manage_vm_menu "$VM_NAME"
     else
+        log_msg "ERROR: Container creation failed. Docker Output: $DOCKER_ERR"
         echo -e " ${RED}✘ [SYSTEM FAULT] Creation failed.${NC}"
-        echo -e " ${YELLOW}Docker Error Output:${NC}"
+        echo -e " ${YELLOW}────────────────── DOCKER ERROR ──────────────────${NC}"
         echo -e " ${WHITE}$DOCKER_ERR${NC}"
-        echo -e " ${YELLOW}Tip: Confirm Docker daemon service status by typing: systemctl restart docker${NC}"
+        echo -e " ${YELLOW}──────────────────────────────────────────────────${NC}"
+        
+        # Detect the specific OverlayFS error and provide the fix
+        if echo "$DOCKER_ERR" | grep -qi "overlay\|invalid argument"; then
+             echo -e " ${CYAN}ℹ SUGGESTION: Your server doesn't support Docker's default overlayfs."
+             echo -e " Return to the main menu and select ${GREEN}[F] Fix Docker (OverlayFS Error)${NC} to resolve this permanently.${NC}"
+        fi
+        
+        echo -e " ${YELLOW}Full error details saved to log file: ${WHITE}$LOG_FILE${NC}"
         
         docker rm -f "$VM_NAME" >/dev/null 2>&1
         docker network rm "net_$VM_NAME" >/dev/null 2>&1
-        sleep 4
+        sleep 5
     fi
 }
 
@@ -487,6 +546,7 @@ while true; do
     
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -e "  ${GREEN}[N]${NC} Create New VM"
+    echo -e "  ${YELLOW}[F]${NC} Fix Docker (OverlayFS Error)"
     echo -e "  ${RED}[E]${NC} Exit Panel"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -n " Enter Number to Manage or [N]: "
@@ -494,6 +554,8 @@ while true; do
     
     if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
          create_vm
+    elif [[ "$CHOICE" == "f" || "$CHOICE" == "F" ]]; then
+         fix_docker
     elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
         clear
         exit 0
