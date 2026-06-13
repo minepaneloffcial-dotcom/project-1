@@ -328,19 +328,28 @@ create_vm() {
     # Generate CPU File
     if [ "$USE_SPOOF" = true ]; then
         # Remove any leftover directory or file from previous failed attempts
-        rm -f "$CPU_FILE"
+        rm -rf "$CPU_FILE"
         
         # Using awk is safer than sed for handling special characters (like /, &, etc)
-        # that the user might type in Custom CPU mode.
         awk -v vid="$V_ID" -v cname="$C_NAME" -v cmhz="$C_MHZ" '
         /^vendor_id/ { print "vendor_id\t: " vid; next }
         /^model name/ { print "model name\t: " cname; next }
         /^cpu MHz/ { print "cpu MHz\t\t: " cmhz; next }
         { print }
         ' /proc/cpuinfo > "$CPU_FILE"
+        
+        # Verify the CPU file was created properly
+        if [ ! -f "$CPU_FILE" ] || [ ! -s "$CPU_FILE" ]; then
+            echo -e " ${RED}✘ Failed to generate CPU spoof file. Reverting to Default CPU.${NC}"
+            USE_SPOOF=false
+            rm -rf "$CPU_FILE"
+        fi
     fi
 
     mkdir -p "$DATA_DIR"
+    
+    # Remove any pre-existing container with the same name to avoid "name already in use" errors
+    docker rm -f "$VM_NAME" >/dev/null 2>&1
     
     echo -e " ${BLUE}▶${NC} Deploying container..."
 
@@ -372,16 +381,16 @@ create_vm() {
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # ADD IMAGE AND SHELL (Fix for Alpine crash)
+    # ADD IMAGE AND SHELL
     CMD="$CMD $IMG $VM_SHELL"
 
-    # EXECUTE
-    eval "$CMD" >/dev/null 2>&1
+    # EXECUTE AND CAPTURE DOCKER ERRORS
+    DOCKER_ERR=$(eval "$CMD" 2>&1)
     
     if [ $? -eq 0 ]; then
         echo -e " ${BLUE}∞${NC} Setting root password..."
         sleep 2
-        # Pass password safely via STDIN to avoid shell injection/breaking on special chars
+        # Pass password safely via STDIN
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
         
         # Set VPS Host in MOTD
@@ -399,8 +408,13 @@ create_vm() {
         manage_vm_menu "$VM_NAME"
     else
         echo -e " ${RED}✘ [SYSTEM FAULT] Creation failed.${NC}"
+        echo -e " ${YELLOW}Docker Error Output:${NC}"
+        echo -e " ${WHITE}$DOCKER_ERR${NC}"
         echo -e " ${YELLOW}Tip: Confirm Docker daemon service status by typing: systemctl restart docker${NC}"
-        sleep 3
+        
+        # Cleanup failed container remnants if it partially started
+        docker rm -f "$VM_NAME" >/dev/null 2>&1
+        sleep 4
     fi
 }
 
