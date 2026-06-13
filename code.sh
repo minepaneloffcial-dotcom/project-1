@@ -205,11 +205,15 @@ create_vm() {
     echo -e " ${BLUE}Other:${NC}"
     echo -e "   7) Kali Linux"
     echo -e "   8) Alpine Linux"
+    echo -e ""
+    echo -e " ${PURPLE}Pterodactyl / Full VM:${NC}"
+    echo -e "   9) Ubuntu 22.04 (Systemd + Docker Supported)"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Selection [1-8]: "
+    echo -n " Selection [1-9]: "
     read -r os_sel
     
     VM_SHELL="/bin/bash"
+    PTERO_MODE=false
     case "$os_sel" in
         1) IMG="ubuntu:22.04" ;;
         2) IMG="ubuntu:20.04" ;;
@@ -219,6 +223,7 @@ create_vm() {
         6) IMG="debian:10" ;;
         7) IMG="kalilinux/kali-rolling:latest" ;;
         8) IMG="alpine:latest"; VM_SHELL="/bin/sh" ;;
+        9) IMG="jrei/systemd-ubuntu:22.04"; PTERO_MODE=true ;;
         *) IMG="ubuntu:22.04" ;;
     esac
 
@@ -402,6 +407,11 @@ create_vm() {
     # ==========================================
     CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped -v $DATA_DIR:/root:rw"
 
+    # PTERODACTYL / SYSTEMD MODE SETUP
+    if [ "$PTERO_MODE" = true ]; then
+        CMD="$CMD --privileged -v /sys/fs/cgroup:/sys/fs/cgroup:ro -v /var/run/docker.sock:/var/run/docker.sock"
+    fi
+
     # APPLY RESOURCE LOGIC
     if [ "$MODE" == "dedicated" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
@@ -417,8 +427,12 @@ create_vm() {
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # ADD IMAGE AND SHELL
-    CMD="$CMD $IMG $VM_SHELL"
+    # ADD IMAGE AND SHELL (For systemd images, /sbin/init is required to boot)
+    if [ "$PTERO_MODE" = true ]; then
+        CMD="$CMD $IMG /sbin/init"
+    else
+        CMD="$CMD $IMG $VM_SHELL"
+    fi
 
     # ==========================================
     # EXECUTE AND LOG
@@ -430,7 +444,7 @@ create_vm() {
     if [ $STATUS -eq 0 ]; then
         log_msg "Container $VM_NAME created successfully."
         echo -e " ${BLUE}∞${NC} Configuring VM environment..."
-        sleep 2
+        sleep 5  # Give systemd a few seconds to fully boot inside
 
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
@@ -441,7 +455,7 @@ create_vm() {
         printf "   Welcome to %s\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
         printf "  ============================================\n\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
 
-        # 3. Fix Neofetch Config (Show correct Host & Docker RAM limits)
+        # 3. Fix Neofetch Config
         docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
         
         cat << 'NEOFETCH_CONF' > /tmp/neofetch_config.conf
@@ -456,7 +470,6 @@ print_info() {
     info "Memory" memory
 }
 
-# Custom function to read Docker cgroup limits instead of Host RAM
 memory() {
     if [ -f /sys/fs/cgroup/memory.max ]; then
         limit=$(cat /sys/fs/cgroup/memory.max)
@@ -483,12 +496,9 @@ NEOFETCH_CONF
         # 4. Deep IP Spoofing
         if [ -n "$SPOOF_IP" ]; then
             log_msg "Applying Deep IP Spoof: $SPOOF_IP to $VM_NAME"
-            
-            # Bind IP to eth0 so 'ip addr' shows it natively
             docker exec "$VM_NAME" $VM_SHELL -c "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null || true"
             echo "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /root/.bashrc"
 
-            # Override curl to fake IP checker sites
             cat << CURL_SPOOF > /tmp/curl_wrapper
 #!/bin/bash
 REAL_CURL=/usr/bin/curl
@@ -514,7 +524,6 @@ CURL_SPOOF
             docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/curl"
             rm /tmp/curl_wrapper
 
-            # Override wget for IP checker sites
             cat << WGET_SPOOF > /tmp/wget_wrapper
 #!/bin/bash
 REAL_WGET=/usr/bin/wget
@@ -537,13 +546,17 @@ WGET_SPOOF
             rm /tmp/wget_wrapper
         fi
 
-        # 5. Auto-install VPS packages (neofetch, curl, iproute2)
-        docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
+        # 5. Install Packages & Pterodactyl Docker
+        if [ "$PTERO_MODE" = true ]; then
+            echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (This may take a minute)..."
+            docker exec "$VM_NAME" $VM_SHELL -c "apt-get update -qq && apt-get install -y -qq curl wget iproute2 neofetch >/dev/null 2>&1 && curl -fsSL https://get.docker.com | bash >/dev/null 2>&1"
+        else
+            docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
+        fi
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
-        echo -e " ${YELLOW}Note: VPS packages (neofetch, curl) are installing in the background.${NC}"
         echo -e " Redirecting to manager..."
-        sleep 3
+        sleep 2
         manage_vm_menu "$VM_NAME"
     else
         log_msg "ERROR: Container creation failed. Docker Output: $DOCKER_ERR"
