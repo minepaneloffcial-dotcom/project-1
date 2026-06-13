@@ -128,7 +128,6 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
-                    docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
@@ -143,7 +142,6 @@ manage_vm_menu() {
                 echo -n " Confirm Deletion (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
-                    docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
@@ -236,44 +234,16 @@ create_vm() {
     read -r VPS_HOST
 
     # ==========================================
-    # NETWORK CONFIGURATION
+    # IP SPOOFER
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}NETWORK CONFIGURATION${NC}"
+    echo -e "         ${WHITE}SET IP ADDRESS (SPOOF)${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " 1) ${GREEN}NAT (Shared Host IP)${NC}"
-    echo -e "    * VM shares server IP. curl ifconfig.me shows your Host IP."
-    echo -e ""
-    echo -e " 2) ${YELLOW}Dedicated IP (MacVLAN)${NC}"
-    echo -e "    * Gives VM its own Public IP (Requires additional IPs from provider)."
-    echo -e "    * ${RED}WARNING: DO NOT enter your server's main IP here!${NC}"
-    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Selection [1-2]: "
-    read -r net_sel
-
-    NET_MODE="nat"
-    MACVLAN_IP=""
-    MACVLAN_GW=""
-    MACVLAN_SUBNET=""
-
-    if [ "$net_sel" == "2" ]; then
-        NET_MODE="macvlan"
-        echo -n " Enter Subnet (e.g. 103.186.52.0/24): "
-        read -r MACVLAN_SUBNET
-        echo -n " Enter Gateway (e.g. 103.186.52.1): "
-        read -r MACVLAN_GW
-        echo -n " Enter Dedicated IP for this VM (e.g. 103.186.52.164): "
-        read -r MACVLAN_IP
-        
-        if [ -z "$MACVLAN_SUBNET" ] || [ -z "$MACVLAN_GW" ] || [ -z "$MACVLAN_IP" ]; then
-            echo -e " ${RED}✘ Missing MacVLAN info. Falling back to NAT.${NC}"
-            NET_MODE="nat"
-            sleep 2
-        fi
-    else
-        NET_MODE="nat"
-    fi
+    echo -e " This will fake the IP shown in 'curl ifconfig.me' inside the VM."
+    echo -e " Leave blank if you want it to show the default Host IP."
+    echo -n " Enter IP to display (e.g. 103.186.52.163): "
+    read -r SPOOF_IP
 
     # ==========================================
     # RESOURCE ALLOCATION (RAM & CPU)
@@ -446,29 +416,6 @@ create_vm() {
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # APPLY NETWORK LOGIC
-    if [ "$NET_MODE" == "macvlan" ]; then
-        docker network rm "net_$VM_NAME" >/dev/null 2>&1
-        
-        # Attempt to create MacVLAN Network, capture errors
-        NET_CREATE_ERR=$(docker network create -d macvlan \
-            --subnet="$MACVLAN_SUBNET" \
-            --gateway="$MACVLAN_GW" \
-            -o parent=eth0 \
-            "net_$VM_NAME" 2>&1)
-        
-        if [ $? -ne 0 ]; then
-            echo -e " ${RED}✘ MacVLAN Network Creation Failed!${NC}"
-            echo -e " ${YELLOW}Docker Error: $NET_CREATE_ERR${NC}"
-            echo -e " ${YELLOW}Falling back to NAT (Shared Host IP).${NC}"
-            log_msg "MacVLAN creation failed: $NET_CREATE_ERR"
-            NET_MODE="nat"
-            sleep 3
-        else
-            CMD="$CMD --network net_$VM_NAME --ip $MACVLAN_IP"
-        fi
-    fi
-
     # ADD IMAGE AND SHELL
     CMD="$CMD $IMG $VM_SHELL"
 
@@ -499,7 +446,27 @@ create_vm() {
             printf "host=\"%s\"\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat > /etc/skel/.config/neofetch/config.conf"
         fi
 
-        # 3. Auto-install VPS packages (neofetch, curl)
+        # 3. IP Spoofer (Override curl for IP check sites)
+        if [ -n "$SPOOF_IP" ]; then
+            log_msg "Applying IP Spoof: $SPOOF_IP to $VM_NAME"
+            docker exec "$VM_NAME" $VM_SHELL -c "cat <<'EOFSCRIPT' > /usr/local/bin/curl
+#!/bin/bash
+# Original curl binary path
+REAL_CURL=/usr/bin/curl
+
+# Check if user is trying to check their IP
+if [[ \"\$@\" == *\"ifconfig.me\"* ]] || [[ \"\$@\" == *\"ipinfo.io/ip\"* ]] || [[ \"\$@\" == *\"icanhazip.com\"* ]] || [[ \"\$@\" == *\"api.ipify.org\"* ]] || [[ \"\$@\" == *\"checkip.amazonaws.com\"* ]]; then
+    echo $SPOOF_IP
+else
+    # Run normal curl for everything else
+    \$REAL_CURL \"\$@\"
+fi
+EOFSCRIPT
+chmod +x /usr/local/bin/curl"
+        fi
+
+        # 4. Auto-install VPS packages (neofetch, curl)
+        # For Alpine, we must ensure real curl goes to /usr/bin/curl
         docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl iproute2 >/dev/null 2>&1 && apk add neofetch curl iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
@@ -522,7 +489,6 @@ create_vm() {
         echo -e " ${YELLOW}Full error details saved to log file: ${WHITE}$LOG_FILE${NC}"
         
         docker rm -f "$VM_NAME" >/dev/null 2>&1
-        docker network rm "net_$VM_NAME" >/dev/null 2>&1
         sleep 5
     fi
 }
