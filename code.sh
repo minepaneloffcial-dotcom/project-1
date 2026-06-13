@@ -232,15 +232,16 @@ create_vm() {
     echo -e " This will be displayed in neofetch and SSH MOTD."
     echo -n " Enter Provider Name (e.g. Cryzon Cloud Host Ltd.): "
     read -r VPS_HOST
+    if [ -z "$VPS_HOST" ]; then VPS_HOST="Unknown Host"; fi
 
     # ==========================================
     # IP SPOOFER
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}SET IP ADDRESS (SPOOF)${NC}"
+    echo -e "         ${WHITE}SET IP ADDRESS (DEEP SPOOF)${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " This will fake the IP shown in 'curl ifconfig.me' inside the VM."
+    echo -e " This will fake the IP shown in 'ip addr', 'curl ifconfig.me', and 'curl ipinfo.io'."
     echo -e " Leave blank if you want it to show the default Host IP."
     echo -n " Enter IP to display (e.g. 103.186.52.163): "
     read -r SPOOF_IP
@@ -434,40 +435,110 @@ create_vm() {
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
         
-        # 2. Set VPS Host in MOTD & Neofetch
-        if [ -n "$VPS_HOST" ]; then
-            docker exec "$VM_NAME" $VM_SHELL -c "echo '' > /etc/motd"
-            printf "  ============================================\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
-            printf "   Welcome to %s\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
-            printf "  ============================================\n\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
-            
-            docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
-            printf "host=\"%s\"\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat > /root/.config/neofetch/config.conf"
-            printf "host=\"%s\"\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat > /etc/skel/.config/neofetch/config.conf"
-        fi
+        # 2. Set VPS Host in MOTD
+        docker exec "$VM_NAME" $VM_SHELL -c "echo '' > /etc/motd"
+        printf "  ============================================\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
+        printf "   Welcome to %s\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
+        printf "  ============================================\n\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
 
-        # 3. IP Spoofer (Override curl for IP check sites)
+        # 3. Fix Neofetch Config (Show correct Host & Docker RAM limits)
+        docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
+        
+        cat << 'NEOFETCH_CONF' > /tmp/neofetch_config.conf
+print_info() {
+    prin "Host" "VPS_HOST_PLACEHOLDER"
+    info "OS" distro
+    info "Kernel" kernel
+    info "Uptime" uptime
+    info "Packages" packages
+    info "Shell" shell
+    info "CPU" cpu
+    info "Memory" memory
+}
+
+# Custom function to read Docker cgroup limits instead of Host RAM
+memory() {
+    if [ -f /sys/fs/cgroup/memory.max ]; then
+        limit=$(cat /sys/fs/cgroup/memory.max)
+        used=$(cat /sys/fs/cgroup/memory.current)
+        [ "$limit" == "max" ] && limit=$(awk '/MemTotal/ {print $2*1024}' /proc/meminfo)
+    elif [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+        limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+        used=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)
+    else
+        limit=$(awk '/MemTotal/ {print $2*1024}' /proc/meminfo)
+        used=$(awk '/MemAvailable/ {print $2*1024}' /proc/meminfo)
+    fi
+    limit_m=$((limit/1024/1024))
+    used_m=$((used/1024/1024))
+    echo "${used_m}MiB / ${limit_m}MiB"
+}
+NEOFETCH_CONF
+
+        sed -i "s/VPS_HOST_PLACEHOLDER/$VPS_HOST/g" /tmp/neofetch_config.conf
+        docker cp /tmp/neofetch_config.conf "$VM_NAME":/root/.config/neofetch/config.conf
+        docker cp /tmp/neofetch_config.conf "$VM_NAME":/etc/skel/.config/neofetch/config.conf
+        rm /tmp/neofetch_config.conf
+
+        # 4. Deep IP Spoofing
         if [ -n "$SPOOF_IP" ]; then
-            log_msg "Applying IP Spoof: $SPOOF_IP to $VM_NAME"
-            docker exec "$VM_NAME" $VM_SHELL -c "cat <<'EOFSCRIPT' > /usr/local/bin/curl
-#!/bin/bash
-# Original curl binary path
-REAL_CURL=/usr/bin/curl
+            log_msg "Applying Deep IP Spoof: $SPOOF_IP to $VM_NAME"
+            
+            # Bind IP to eth0 so 'ip addr' shows it natively
+            docker exec "$VM_NAME" $VM_SHELL -c "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null || true"
+            echo "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /root/.bashrc"
 
-# Check if user is trying to check their IP
-if [[ \"\$@\" == *\"ifconfig.me\"* ]] || [[ \"\$@\" == *\"ipinfo.io/ip\"* ]] || [[ \"\$@\" == *\"icanhazip.com\"* ]] || [[ \"\$@\" == *\"api.ipify.org\"* ]] || [[ \"\$@\" == *\"checkip.amazonaws.com\"* ]]; then
-    echo $SPOOF_IP
-else
-    # Run normal curl for everything else
-    \$REAL_CURL \"\$@\"
-fi
-EOFSCRIPT
-chmod +x /usr/local/bin/curl"
+            # Override curl to fake IP checker sites
+            cat << CURL_SPOOF > /tmp/curl_wrapper
+#!/bin/bash
+REAL_CURL=/usr/bin/curl
+ARGS="\$@"
+
+IP_SITES=("ifconfig.me" "ipinfo.io" "icanhazip.com" "api.ipify.org" "checkip.amazonaws.com" "ip.sb" "myip.ipip.net")
+
+for site in "\${IP_SITES[@]}"; do
+    if [[ "\$ARGS" == *"\$site"* ]]; then
+        if [[ "\$ARGS" == *"ipinfo.io"* ]] && [[ "\$ARGS" != *"/ip"* ]]; then
+            echo "{\"ip\": \"$SPOOF_IP\", \"city\": \"Council Bluffs\", \"region\": \"Iowa\", \"country\": \"US\", \"loc\": \"41.2619,-95.8608\", \"org\": \"AS396982 Google LLC\", \"postal\": \"51503\", \"timezone\": \"America/Chicago\"}"
+        else
+            echo "$SPOOF_IP"
+        fi
+        exit 0
+    fi
+done
+
+\$REAL_CURL "\$ARGS"
+CURL_SPOOF
+
+            docker cp /tmp/curl_wrapper "$VM_NAME":/usr/local/bin/curl
+            docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/curl"
+            rm /tmp/curl_wrapper
+
+            # Override wget for IP checker sites
+            cat << WGET_SPOOF > /tmp/wget_wrapper
+#!/bin/bash
+REAL_WGET=/usr/bin/wget
+ARGS="\$@"
+
+IP_SITES=("ifconfig.me" "ipinfo.io" "icanhazip.com" "api.ipify.org" "checkip.amazonaws.com" "ip.sb" "myip.ipip.net")
+
+for site in "\${IP_SITES[@]}"; do
+    if [[ "\$ARGS" == *"\$site"* ]]; then
+        echo "$SPOOF_IP"
+        exit 0
+    fi
+done
+
+\$REAL_WGET "\$ARGS"
+WGET_SPOOF
+
+            docker cp /tmp/wget_wrapper "$VM_NAME":/usr/local/bin/wget
+            docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/wget"
+            rm /tmp/wget_wrapper
         fi
 
-        # 4. Auto-install VPS packages (neofetch, curl)
-        # For Alpine, we must ensure real curl goes to /usr/bin/curl
-        docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl iproute2 >/dev/null 2>&1 && apk add neofetch curl iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
+        # 5. Auto-install VPS packages (neofetch, curl, iproute2)
+        docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
         echo -e " ${YELLOW}Note: VPS packages (neofetch, curl) are installing in the background.${NC}"
