@@ -397,7 +397,9 @@ create_vm() {
 
     # PTERODACTYL / SYSTEMD MODE SETUP
     if [ "$PTERO_MODE" = true ]; then
-        CMD="$CMD --privileged --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
+        # Mount Host Docker Socket so inner docker commands bypass kernel restrictions
+        # Privileged + cgroup access required for systemd
+        CMD="$CMD --privileged --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v /var/run/docker.sock:/var/run/docker.sock"
     fi
 
     # APPLY RESOURCE LOGIC
@@ -437,44 +439,7 @@ create_vm() {
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
 
-        # 2. Fix Neofetch Config (Shows proper RAM limits instead of host server RAM)
-        docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
-        
-        cat << 'NEOFETCH_CONF' > /tmp/neofetch_config.conf
-print_info() {
-    info "Host" host
-    info "OS" distro
-    info "Kernel" kernel
-    info "Uptime" uptime
-    info "Packages" packages
-    info "Shell" shell
-    info "CPU" cpu
-    info "Memory" memory
-}
-
-memory() {
-    if [ -f /sys/fs/cgroup/memory.max ]; then
-        limit=$(cat /sys/fs/cgroup/memory.max)
-        used=$(cat /sys/fs/cgroup/memory.current)
-        [ "$limit" == "max" ] && limit=$(awk '/MemTotal/ {print $2*1024}' /proc/meminfo)
-    elif [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
-        limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
-        used=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)
-    else
-        limit=$(awk '/MemTotal/ {print $2*1024}' /proc/meminfo)
-        used=$(awk '/MemAvailable/ {print $2*1024}' /proc/meminfo)
-    fi
-    limit_m=$((limit/1024/1024))
-    used_m=$((used/1024/1024))
-    echo "${used_m}MiB / ${limit_m}MiB"
-}
-NEOFETCH_CONF
-
-        docker cp /tmp/neofetch_config.conf "$VM_NAME":/root/.config/neofetch/config.conf
-        docker cp /tmp/neofetch_config.conf "$VM_NAME":/etc/skel/.config/neofetch/config.conf
-        rm /tmp/neofetch_config.conf
-
-        # 3. Deep IP Spoofing
+        # 2. Deep IP Spoofing
         if [ -n "$SPOOF_IP" ]; then
             log_msg "Applying Deep IP Spoof: $SPOOF_IP to $VM_NAME"
             docker exec "$VM_NAME" $VM_SHELL -c "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null || true"
@@ -527,42 +492,21 @@ WGET_SPOOF
             rm /tmp/wget_wrapper
         fi
 
-        # 4. Install Packages & Pterodactyl Docker
+        # 3. Install Packages
         if [ "$PTERO_MODE" = true ]; then
-            echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
+            echo -e " ${BLUE}∞${NC} Installing Docker CLI & essential packages..."
             
             # Install Dependencies
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 >/dev/null 2>&1"
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 iptables >/dev/null 2>&1"
             
             # Add Docker Official Repo
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >/dev/null 2>&1"
             docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
             
-            # Install Docker CE
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1"
+            # Install ONLY Docker CLI (Because we mounted the host socket, we don't need the dockerd engine inside the container!)
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce-cli docker-compose-plugin >/dev/null 2>&1"
             
-            # FIX: Force VFS storage driver inside the VM to prevent overlay crashes
-            docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\"}' > /etc/docker/daemon.json"
-            
-            # Start Docker via systemctl
-            docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1"
-            
-            # FALLBACK: If systemctl failed to start it, force start it in the background
-            docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs > /var/log/dockerd.log 2>&1 & fi"
-            
-            # Create a startup script so if the VM reboots, docker starts automatically
-            cat << 'DOCKER_START' > /tmp/start_docker.sh
-#!/bin/bash
-if ! docker ps >/dev/null 2>&1; then
-    dockerd --storage-driver=vfs > /var/log/dockerd.log 2>&1 &
-fi
-DOCKER_START
-            docker cp /tmp/start_docker.sh "$VM_NAME":/usr/local/bin/start_docker.sh
-            docker exec "$VM_NAME" bash -c "chmod +x /usr/local/bin/start_docker.sh"
-            docker exec "$VM_NAME" bash -c "echo '/usr/local/bin/start_docker.sh' >> /etc/rc.local && chmod +x /etc/rc.local"
-            rm /tmp/start_docker.sh
-
-            echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
+            echo -e " ${GREEN}✔ Docker CLI installed successfully! (Connected to Host Daemon via Socket)${NC}"
         else
             docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         fi
