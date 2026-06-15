@@ -397,7 +397,6 @@ create_vm() {
 
     # PTERODACTYL / SYSTEMD MODE SETUP
     if [ "$PTERO_MODE" = true ]; then
-        # AGGRESSIVE FIX: Share host cgroups directly as Read-Write to allow systemd to boot
         CMD="$CMD --privileged --cgroupns=host --security-opt seccomp=unconfined --tmpfs /tmp --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
     fi
 
@@ -449,7 +448,7 @@ create_vm() {
         done
 
         if [ "$BOOTED" == false ]; then
-            echo -e " ${RED}✘ VM failed to boot. Your host kernel likely blocks nested Systemd.${NC}"
+            echo -e " ${RED}✘ VM failed to boot. Your host kernel may not support nested Systemd.${NC}"
             echo -e " ${YELLOW}Showing VM logs...${NC}"
             docker logs "$VM_NAME" --tail 20
             log_msg "VM Boot Failed"
@@ -460,7 +459,76 @@ create_vm() {
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
 
-        # 2. Deep IP Spoofing
+        # 2. FIX UPTIME: Override uptime command to show VM-only uptime (starts from 0)
+        cat << 'UPTIME_WRAP' > /tmp/uptime_wrap
+#!/bin/bash
+# Get uptime of PID 1 (Container start time, not Host time)
+SEC=$(ps -p 1 -o etimes= | awk '{print $1}')
+if [ -z "$SEC" ]; then
+    /usr/bin/uptime
+    exit 0
+fi
+D=$((SEC/86400))
+H=$(( (SEC%86400)/3600 ))
+M=$(( (SEC%3600)/60 ))
+echo "up ${D} days, ${H}:${M}"
+UPTIME_WRAP
+        docker cp /tmp/uptime_wrap "$VM_NAME":/usr/local/bin/uptime
+        docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/uptime"
+        rm /tmp/uptime_wrap
+
+        # 3. FIX NEOFETCH: Show Fresh Uptime and Fresh RAM Limits
+        docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
+        
+        cat << 'NEOFETCH_CONF' > /tmp/neofetch_config.conf
+print_info() {
+    info "Host" host
+    info "OS" distro
+    info "Kernel" kernel
+    info "Uptime" uptime
+    info "Packages" packages
+    info "Shell" shell
+    info "CPU" cpu
+    info "Memory" memory
+}
+
+# Custom uptime to show VM boot time
+uptime() {
+    SEC=$(ps -p 1 -o etimes= | awk '{print $1}')
+    if [ -z "$SEC" ]; then
+        cat /proc/uptime
+        return
+    fi
+    D=$((SEC/86400))
+    H=$(( (SEC%86400)/3600 ))
+    M=$(( (SEC%3600)/60 ))
+    echo "${D} days, ${H} hours, ${M} mins"
+}
+
+# Custom memory to show Docker cgroup limits
+memory() {
+    if [ -f /sys/fs/cgroup/memory.max ]; then
+        limit=$(cat /sys/fs/cgroup/memory.max)
+        used=$(cat /sys/fs/cgroup/memory.current)
+        [ "$limit" == "max" ] && limit=$(awk '/MemTotal/ {print $2*1024}' /proc/meminfo)
+    elif [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+        limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+        used=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)
+    else
+        limit=$(awk '/MemTotal/ {print $2*1024}' /proc/meminfo)
+        used=$(awk '/MemAvailable/ {print $2*1024}' /proc/meminfo)
+    fi
+    limit_m=$((limit/1024/1024))
+    used_m=$((used/1024/1024))
+    echo "${used_m}MiB / ${limit_m}MiB"
+}
+NEOFETCH_CONF
+
+        docker cp /tmp/neofetch_config.conf "$VM_NAME":/root/.config/neofetch/config.conf
+        docker cp /tmp/neofetch_config.conf "$VM_NAME":/etc/skel/.config/neofetch/config.conf
+        rm /tmp/neofetch_config.conf
+
+        # 4. Deep IP Spoofing
         if [ -n "$SPOOF_IP" ]; then
             log_msg "Applying Deep IP Spoof: $SPOOF_IP to $VM_NAME"
             docker exec "$VM_NAME" $VM_SHELL -c "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null || true"
@@ -513,15 +581,15 @@ WGET_SPOOF
             rm /tmp/wget_wrapper
         fi
 
-        # 3. Install Packages
+        # 5. Install Packages
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
             
-            # Pre-configure daemon.json to prevent overlayfs and iptables crashes
+            # Pre-configure daemon.json
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
             
             # Install Dependencies
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 >/dev/null 2>&1"
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps >/dev/null 2>&1"
             
             # Add Docker Official Repo
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >/dev/null 2>&1"
@@ -536,7 +604,7 @@ WGET_SPOOF
             # FALLBACK
             docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 & fi"
             
-            # Auto-start script on boot
+            # Auto-start script
             cat << 'DOCKER_START' > /tmp/start_docker.sh
 #!/bin/bash
 if ! docker ps >/dev/null 2>&1; then
@@ -550,7 +618,7 @@ DOCKER_START
 
             echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
         else
-            docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
+            docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         fi
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
