@@ -397,9 +397,8 @@ create_vm() {
 
     # PTERODACTYL / SYSTEMD MODE SETUP
     if [ "$PTERO_MODE" = true ]; then
-        # Official requirements for running systemd inside docker without crashing
-        # Added tmpfs mounts to prevent boot loops, cgroup to ro
-        CMD="$CMD --privileged --security-opt seccomp=unconfined --tmpfs /tmp --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:ro"
+        # AGGRESSIVE FIX: Share host cgroups directly as Read-Write to allow systemd to boot
+        CMD="$CMD --privileged --cgroupns=host --security-opt seccomp=unconfined --tmpfs /tmp --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
     fi
 
     # APPLY RESOURCE LOGIC
@@ -435,7 +434,7 @@ create_vm() {
         log_msg "Container $VM_NAME created successfully."
         echo -e " ${BLUE}∞${NC} Configuring VM environment..."
         
-        # SMART WAIT LOOP: Wait until VM is fully booted before running exec commands
+        # SMART WAIT LOOP
         echo -e " ${YELLOW}Waiting for VM to fully boot...${NC}"
         BOOTED=false
         for i in {1..20}; do
@@ -450,7 +449,7 @@ create_vm() {
         done
 
         if [ "$BOOTED" == false ]; then
-            echo -e " ${RED}✘ VM failed to boot. Your host kernel may not support nested Systemd.${NC}"
+            echo -e " ${RED}✘ VM failed to boot. Your host kernel likely blocks nested Systemd.${NC}"
             echo -e " ${YELLOW}Showing VM logs...${NC}"
             docker logs "$VM_NAME" --tail 20
             log_msg "VM Boot Failed"
@@ -518,7 +517,7 @@ WGET_SPOOF
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
             
-            # CRITICAL: Pre-configure daemon.json to prevent overlayfs and iptables kernel crashes
+            # Pre-configure daemon.json to prevent overlayfs and iptables crashes
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
             
             # Install Dependencies
@@ -534,10 +533,10 @@ WGET_SPOOF
             # Start Docker via systemctl
             docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1"
             
-            # FALLBACK: If systemctl failed to start it, force start it in the background
+            # FALLBACK
             docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 & fi"
             
-            # Create a startup script so if the VM reboots, docker starts automatically
+            # Auto-start script on boot
             cat << 'DOCKER_START' > /tmp/start_docker.sh
 #!/bin/bash
 if ! docker ps >/dev/null 2>&1; then
