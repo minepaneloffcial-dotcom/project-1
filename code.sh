@@ -397,9 +397,7 @@ create_vm() {
 
     # PTERODACTYL / SYSTEMD MODE SETUP
     if [ "$PTERO_MODE" = true ]; then
-        # Mount Host Docker Socket so inner docker commands bypass kernel restrictions
-        # Privileged + cgroup access required for systemd
-        CMD="$CMD --privileged --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v /var/run/docker.sock:/var/run/docker.sock"
+        CMD="$CMD --privileged --cgroupns=host --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
     fi
 
     # APPLY RESOURCE LOGIC
@@ -434,7 +432,22 @@ create_vm() {
     if [ $STATUS -eq 0 ]; then
         log_msg "Container $VM_NAME created successfully."
         echo -e " ${BLUE}∞${NC} Configuring VM environment..."
-        sleep 5
+        
+        # SMART WAIT LOOP: Wait until VM is fully booted before running exec commands
+        echo -e " ${YELLOW}Waiting for VM to fully boot...${NC}"
+        for i in {1..15}; do
+            if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 2
+        done
+
+        if ! docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
+            echo -e " ${RED}✘ VM failed to boot properly. Check Docker logs.${NC}"
+            log_msg "VM Boot Failed"
+            sleep 3
+            return
+        fi
 
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
@@ -494,19 +507,40 @@ WGET_SPOOF
 
         # 3. Install Packages
         if [ "$PTERO_MODE" = true ]; then
-            echo -e " ${BLUE}∞${NC} Installing Docker CLI & essential packages..."
+            echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
+            
+            # CRITICAL: Pre-configure daemon.json to prevent overlayfs and iptables kernel crashes
+            docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
             
             # Install Dependencies
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 iptables >/dev/null 2>&1"
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 >/dev/null 2>&1"
             
             # Add Docker Official Repo
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >/dev/null 2>&1"
             docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
             
-            # Install ONLY Docker CLI (Because we mounted the host socket, we don't need the dockerd engine inside the container!)
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce-cli docker-compose-plugin >/dev/null 2>&1"
+            # Install Docker CE
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1"
             
-            echo -e " ${GREEN}✔ Docker CLI installed successfully! (Connected to Host Daemon via Socket)${NC}"
+            # Start Docker via systemctl
+            docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1"
+            
+            # FALLBACK: If systemctl failed to start it, force start it in the background
+            docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 & fi"
+            
+            # Create a startup script so if the VM reboots, docker starts automatically
+            cat << 'DOCKER_START' > /tmp/start_docker.sh
+#!/bin/bash
+if ! docker ps >/dev/null 2>&1; then
+    dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 &
+fi
+DOCKER_START
+            docker cp /tmp/start_docker.sh "$VM_NAME":/usr/local/bin/start_docker.sh
+            docker exec "$VM_NAME" bash -c "chmod +x /usr/local/bin/start_docker.sh"
+            docker exec "$VM_NAME" bash -c "echo '/usr/local/bin/start_docker.sh' >> /etc/rc.local && chmod +x /etc/rc.local"
+            rm /tmp/start_docker.sh
+
+            echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
         else
             docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
         fi
