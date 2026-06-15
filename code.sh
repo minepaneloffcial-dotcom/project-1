@@ -397,7 +397,9 @@ create_vm() {
 
     # PTERODACTYL / SYSTEMD MODE SETUP
     if [ "$PTERO_MODE" = true ]; then
-        CMD="$CMD --privileged --cgroupns=host --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
+        # Official requirements for running systemd inside docker without crashing
+        # Added tmpfs mounts to prevent boot loops, cgroup to ro
+        CMD="$CMD --privileged --security-opt seccomp=unconfined --tmpfs /tmp --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:ro"
     fi
 
     # APPLY RESOURCE LOGIC
@@ -435,17 +437,24 @@ create_vm() {
         
         # SMART WAIT LOOP: Wait until VM is fully booted before running exec commands
         echo -e " ${YELLOW}Waiting for VM to fully boot...${NC}"
-        for i in {1..15}; do
-            if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
-                break
+        BOOTED=false
+        for i in {1..20}; do
+            STATE=$(docker inspect -f '{{.State.Running}}' "$VM_NAME" 2>/dev/null)
+            if [ "$STATE" == "true" ]; then
+                if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
+                    BOOTED=true
+                    break
+                fi
             fi
             sleep 2
         done
 
-        if ! docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
-            echo -e " ${RED}✘ VM failed to boot properly. Check Docker logs.${NC}"
+        if [ "$BOOTED" == false ]; then
+            echo -e " ${RED}✘ VM failed to boot. Your host kernel may not support nested Systemd.${NC}"
+            echo -e " ${YELLOW}Showing VM logs...${NC}"
+            docker logs "$VM_NAME" --tail 20
             log_msg "VM Boot Failed"
-            sleep 3
+            sleep 5
             return
         fi
 
