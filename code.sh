@@ -228,18 +228,6 @@ create_vm() {
     esac
 
     # ==========================================
-    # VPS HOST PROVIDER
-    # ==========================================
-    clear
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}SET VPS HOST PROVIDER${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " This will be displayed in neofetch and SSH MOTD."
-    echo -n " Enter Provider Name (e.g. Cryzon Cloud Host Ltd.): "
-    read -r VPS_HOST
-    if [ -z "$VPS_HOST" ]; then VPS_HOST="Unknown Host"; fi
-
-    # ==========================================
     # IP SPOOFER
     # ==========================================
     clear
@@ -448,19 +436,13 @@ create_vm() {
 
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
-        
-        # 2. Set VPS Host in MOTD
-        docker exec "$VM_NAME" $VM_SHELL -c "echo '' > /etc/motd"
-        printf "  ============================================\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
-        printf "   Welcome to %s\n" "$VPS_HOST" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
-        printf "  ============================================\n\n" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /etc/motd"
 
-        # 3. Fix Neofetch Config
+        # 2. Fix Neofetch Config (Shows proper RAM limits instead of host server RAM)
         docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
         
         cat << 'NEOFETCH_CONF' > /tmp/neofetch_config.conf
 print_info() {
-    prin "Host" "VPS_HOST_PLACEHOLDER"
+    info "Host" host
     info "OS" distro
     info "Kernel" kernel
     info "Uptime" uptime
@@ -488,12 +470,11 @@ memory() {
 }
 NEOFETCH_CONF
 
-        sed -i "s/VPS_HOST_PLACEHOLDER/$VPS_HOST/g" /tmp/neofetch_config.conf
         docker cp /tmp/neofetch_config.conf "$VM_NAME":/root/.config/neofetch/config.conf
         docker cp /tmp/neofetch_config.conf "$VM_NAME":/etc/skel/.config/neofetch/config.conf
         rm /tmp/neofetch_config.conf
 
-        # 4. Deep IP Spoofing
+        # 3. Deep IP Spoofing
         if [ -n "$SPOOF_IP" ]; then
             log_msg "Applying Deep IP Spoof: $SPOOF_IP to $VM_NAME"
             docker exec "$VM_NAME" $VM_SHELL -c "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null || true"
@@ -546,7 +527,7 @@ WGET_SPOOF
             rm /tmp/wget_wrapper
         fi
 
-        # 5. Install Packages & Pterodactyl Docker
+        # 4. Install Packages & Pterodactyl Docker
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
             
@@ -560,7 +541,7 @@ WGET_SPOOF
             # Install Docker CE
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1"
             
-            # FIX: Force VFS storage driver inside the VM
+            # FIX: Force VFS storage driver inside the VM to prevent overlay crashes
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\"}' > /etc/docker/daemon.json"
             
             # Start Docker via systemctl
