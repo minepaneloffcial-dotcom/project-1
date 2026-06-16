@@ -131,6 +131,8 @@ manage_vm_menu() {
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
+                    rm -f "/root/dmi_product_${vm_name#tasin-vm-}.info"
+                    rm -f "/root/dmi_vendor_${vm_name#tasin-vm-}.info"
                     log_msg "VM Wiped: $vm_name"
                     echo -e " ${GREEN}✔ VM Wiped.${NC} Sending to creation menu..."
                     sleep 2
@@ -145,6 +147,8 @@ manage_vm_menu() {
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
+                    rm -f "/root/dmi_product_${vm_name#tasin-vm-}.info"
+                    rm -f "/root/dmi_vendor_${vm_name#tasin-vm-}.info"
                     log_msg "VM Deleted: $vm_name"
                     echo -e " ${GREEN}✔ Deleted.${NC}"
                     sleep 1
@@ -184,6 +188,8 @@ create_vm() {
     VM_NAME="tasin-vm-$VM_ID_NAME"
     DATA_DIR="/root/docker_data_$VM_ID_NAME"
     CPU_FILE="/root/cpu_$VM_ID_NAME.info"
+    DMI_PRODUCT_FILE="/root/dmi_product_$VM_ID_NAME.info"
+    DMI_VENDOR_FILE="/root/dmi_vendor_$VM_ID_NAME.info"
 
     # ==========================================
     # OS SELECTION
@@ -226,6 +232,23 @@ create_vm() {
         9) IMG="jrei/systemd-ubuntu:22.04"; PTERO_MODE=true ;;
         *) IMG="ubuntu:22.04" ;;
     esac
+
+    # ==========================================
+    # CUSTOM HOST MODEL NAME
+    # ==========================================
+    clear
+    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}SET SYSTEM MODEL NAME${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " This will appear as the 'Host' in neofetch and system info."
+    echo -e " Leave blank to use the default host detection."
+    echo -n " Enter Model Name (e.g. MinePanel Host Ltd.): "
+    read -r MODEL_NAME
+
+    if [ -n "$MODEL_NAME" ]; then
+        echo "$MODEL_NAME" > "$DMI_PRODUCT_FILE"
+        echo "$MODEL_NAME" > "$DMI_VENDOR_FILE"
+    fi
 
     # ==========================================
     # IP SPOOFER
@@ -410,9 +433,15 @@ create_vm() {
         CMD="$CMD --cpus=$CORES --memory=$RAM"
     fi
 
-    # ADD SPOOFING
+    # ADD CPU SPOOFING
     if [ "$USE_SPOOF" = true ]; then
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
+    fi
+
+    # ADD DMI MODEL SPOOFING (For Neofetch Host / System Info)
+    if [ -n "$MODEL_NAME" ]; then
+        CMD="$CMD -v $DMI_PRODUCT_FILE:/sys/devices/virtual/dmi/id/product_name:ro"
+        CMD="$CMD -v $DMI_VENDOR_FILE:/sys/devices/virtual/dmi/id/sys_vendor:ro"
     fi
 
     # ADD IMAGE AND SHELL
@@ -477,58 +506,7 @@ UPTIME_WRAP
         docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/uptime"
         rm /tmp/uptime_wrap
 
-        # 3. FIX NEOFETCH: Show Fresh Uptime and Fresh RAM Limits
-        docker exec "$VM_NAME" $VM_SHELL -c "mkdir -p /root/.config/neofetch /etc/skel/.config/neofetch"
-        
-        cat << 'NEOFETCH_CONF' > /tmp/neofetch_config.conf
-print_info() {
-    info "Host" host
-    info "OS" distro
-    info "Kernel" kernel
-    info "Uptime" uptime
-    info "Packages" packages
-    info "Shell" shell
-    info "CPU" cpu
-    info "Memory" memory
-}
-
-# Custom uptime to show VM boot time
-uptime() {
-    SEC=$(ps -p 1 -o etimes= | awk '{print $1}')
-    if [ -z "$SEC" ]; then
-        cat /proc/uptime
-        return
-    fi
-    D=$((SEC/86400))
-    H=$(( (SEC%86400)/3600 ))
-    M=$(( (SEC%3600)/60 ))
-    echo "${D} days, ${H} hours, ${M} mins"
-}
-
-# Custom memory to show Docker cgroup limits
-memory() {
-    if [ -f /sys/fs/cgroup/memory.max ]; then
-        limit=$(cat /sys/fs/cgroup/memory.max)
-        used=$(cat /sys/fs/cgroup/memory.current)
-        [ "$limit" == "max" ] && limit=$(awk '/MemTotal/ {print $2*1024}' /proc/meminfo)
-    elif [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
-        limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
-        used=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)
-    else
-        limit=$(awk '/MemTotal/ {print $2*1024}' /proc/meminfo)
-        used=$(awk '/MemAvailable/ {print $2*1024}' /proc/meminfo)
-    fi
-    limit_m=$((limit/1024/1024))
-    used_m=$((used/1024/1024))
-    echo "${used_m}MiB / ${limit_m}MiB"
-}
-NEOFETCH_CONF
-
-        docker cp /tmp/neofetch_config.conf "$VM_NAME":/root/.config/neofetch/config.conf
-        docker cp /tmp/neofetch_config.conf "$VM_NAME":/etc/skel/.config/neofetch/config.conf
-        rm /tmp/neofetch_config.conf
-
-        # 4. Deep IP Spoofing
+        # 3. Deep IP Spoofing
         if [ -n "$SPOOF_IP" ]; then
             log_msg "Applying Deep IP Spoof: $SPOOF_IP to $VM_NAME"
             docker exec "$VM_NAME" $VM_SHELL -c "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null || true"
@@ -581,7 +559,7 @@ WGET_SPOOF
             rm /tmp/wget_wrapper
         fi
 
-        # 5. Install Packages
+        # 4. Install Packages (No Neofetch config edits, just default install)
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
             
