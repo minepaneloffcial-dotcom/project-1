@@ -438,10 +438,10 @@ create_vm() {
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # ADD DMI MODEL SPOOFING (For Neofetch Host / System Info)
+    # ADD DMI MODEL SPOOFING (Mounted to /etc/ to avoid kernel permission errors)
     if [ -n "$MODEL_NAME" ]; then
-        CMD="$CMD -v $DMI_PRODUCT_FILE:/sys/devices/virtual/dmi/id/product_name:ro"
-        CMD="$CMD -v $DMI_VENDOR_FILE:/sys/devices/virtual/dmi/id/sys_vendor:ro"
+        CMD="$CMD -v $DMI_PRODUCT_FILE:/etc/custom_product_name:ro"
+        CMD="$CMD -v $DMI_VENDOR_FILE:/etc/custom_sys_vendor:ro"
     fi
 
     # ADD IMAGE AND SHELL
@@ -559,7 +559,7 @@ WGET_SPOOF
             rm /tmp/wget_wrapper
         fi
 
-        # 4. Install Packages (No Neofetch config edits, just default install)
+        # 4. Install Packages (Neofetch remains 100% default, no config edits)
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
             
@@ -568,6 +568,12 @@ WGET_SPOOF
             
             # Install Dependencies
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps >/dev/null 2>&1"
+            
+            # Redirect Neofetch Host detection to our custom mounted file
+            if [ -n "$MODEL_NAME" ]; then
+                docker exec "$VM_NAME" bash -c "sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch"
+                docker exec "$VM_NAME" bash -c "sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch"
+            fi
             
             # Add Docker Official Repo
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >/dev/null 2>&1"
@@ -597,6 +603,14 @@ DOCKER_START
             echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
         else
             docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
+            
+            # Redirect Neofetch Host detection to our custom mounted file
+            if [ -n "$MODEL_NAME" ]; then
+                # Wait for neofetch to install before patching
+                sleep 10
+                docker exec "$VM_NAME" $VM_SHELL -c "if [ -f /usr/bin/neofetch ]; then sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch; fi"
+                docker exec "$VM_NAME" $VM_SHELL -c "if [ -f /usr/bin/neofetch ]; then sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch; fi"
+            fi
         fi
         
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
