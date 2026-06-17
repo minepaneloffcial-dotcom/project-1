@@ -128,6 +128,7 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
+                    docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
@@ -144,6 +145,7 @@ manage_vm_menu() {
                 echo -n " Confirm Deletion (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
+                    docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
@@ -251,16 +253,30 @@ create_vm() {
     fi
 
     # ==========================================
-    # IP SPOOFER
+    # NATIVE IP ADDRESS ASSIGNMENT
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}SET IP ADDRESS (DEEP SPOOF)${NC}"
+    echo -e "         ${WHITE}SET MAIN IP ADDRESS${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " This will fake the IP shown in 'ip addr', 'curl ifconfig.me', and 'curl ipinfo.io'."
-    echo -e " Leave blank if you want it to show the default Host IP."
-    echo -n " Enter IP to display (e.g. 103.186.52.163): "
+    echo -e " This will natively assign the IP to the VM's eth0 interface."
+    echo -e " (No fake commands. ip addr/ifconfig will show this IP)."
+    echo -e " Leave blank to use default Docker NAT IP."
+    echo -n " Enter IP to assign (e.g. 103.111.114.110): "
     read -r SPOOF_IP
+
+    if [ -n "$SPOOF_IP" ]; then
+        # Extract the first 3 octets to create a /24 subnet
+        SUBNET=$(echo "$SPOOF_IP" | awk -F. '{print $1"."$2"."$3".0/24"}')
+        docker network rm "net_$VM_NAME" >/dev/null 2>&1
+        NET_ERR=$(docker network create --subnet="$SUBNET" "net_$VM_NAME" 2>&1)
+        if [ $? -ne 0 ]; then
+            echo -e " ${RED}✘ Failed to create custom network: $NET_ERR${NC}"
+            echo -e " ${YELLOW}Falling back to default Docker NAT.${NC}"
+            SPOOF_IP=""
+            sleep 3
+        fi
+    fi
 
     # ==========================================
     # RESOURCE ALLOCATION (RAM & CPU)
@@ -444,6 +460,11 @@ create_vm() {
         CMD="$CMD -v $DMI_VENDOR_FILE:/etc/custom_sys_vendor:ro"
     fi
 
+    # APPLY NATIVE IP ASSIGNMENT
+    if [ -n "$SPOOF_IP" ]; then
+        CMD="$CMD --network net_$VM_NAME --ip $SPOOF_IP"
+    fi
+
     # ADD IMAGE AND SHELL
     if [ "$PTERO_MODE" = true ]; then
         CMD="$CMD $IMG /sbin/init"
@@ -506,60 +527,7 @@ UPTIME_WRAP
         docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/uptime"
         rm /tmp/uptime_wrap
 
-        # 3. Deep IP Spoofing
-        if [ -n "$SPOOF_IP" ]; then
-            log_msg "Applying Deep IP Spoof: $SPOOF_IP to $VM_NAME"
-            docker exec "$VM_NAME" $VM_SHELL -c "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null || true"
-            echo "ip addr add $SPOOF_IP/32 dev eth0 2>/dev/null" | docker exec -i "$VM_NAME" $VM_SHELL -c "cat >> /root/.bashrc"
-
-            cat << CURL_SPOOF > /tmp/curl_wrapper
-#!/bin/bash
-REAL_CURL=/usr/bin/curl
-ARGS="\$@"
-
-IP_SITES=("ifconfig.me" "ipinfo.io" "icanhazip.com" "api.ipify.org" "checkip.amazonaws.com" "ip.sb" "myip.ipip.net")
-
-for site in "\${IP_SITES[@]}"; do
-    if [[ "\$ARGS" == *"\$site"* ]]; then
-        if [[ "\$ARGS" == *"ipinfo.io"* ]] && [[ "\$ARGS" != *"/ip"* ]]; then
-            echo "{\"ip\": \"$SPOOF_IP\", \"city\": \"Council Bluffs\", \"region\": \"Iowa\", \"country\": \"US\", \"loc\": \"41.2619,-95.8608\", \"org\": \"AS396982 Google LLC\", \"postal\": \"51503\", \"timezone\": \"America/Chicago\"}"
-        else
-            echo "$SPOOF_IP"
-        fi
-        exit 0
-    fi
-done
-
-\$REAL_CURL "\$ARGS"
-CURL_SPOOF
-
-            docker cp /tmp/curl_wrapper "$VM_NAME":/usr/local/bin/curl
-            docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/curl"
-            rm /tmp/curl_wrapper
-
-            cat << WGET_SPOOF > /tmp/wget_wrapper
-#!/bin/bash
-REAL_WGET=/usr/bin/wget
-ARGS="\$@"
-
-IP_SITES=("ifconfig.me" "ipinfo.io" "icanhazip.com" "api.ipify.org" "checkip.amazonaws.com" "ip.sb" "myip.ipip.net")
-
-for site in "\${IP_SITES[@]}"; do
-    if [[ "\$ARGS" == *"\$site"* ]]; then
-        echo "$SPOOF_IP"
-        exit 0
-    fi
-done
-
-\$REAL_WGET "\$ARGS"
-WGET_SPOOF
-
-            docker cp /tmp/wget_wrapper "$VM_NAME":/usr/local/bin/wget
-            docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/wget"
-            rm /tmp/wget_wrapper
-        fi
-
-        # 4. Install Packages (Neofetch remains 100% default, no config edits)
+        # 3. Install Packages (Neofetch remains 100% default, no config edits)
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
             
@@ -575,8 +543,8 @@ WGET_SPOOF
                 docker exec "$VM_NAME" bash -c "sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch"
             fi
             
-            # Add Docker Official Repo
-            docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >/dev/null 2>&1"
+            # Add Docker Official Repo (Fixed GPG Key fetching)
+            docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg"
             docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
             
             # Install Docker CE
@@ -632,6 +600,7 @@ DOCKER_START
         echo -e " ${YELLOW}Full error details saved to log file: ${WHITE}$LOG_FILE${NC}"
         
         docker rm -f "$VM_NAME" >/dev/null 2>&1
+        docker network rm "net_$VM_NAME" >/dev/null 2>&1
         sleep 5
     fi
 }
