@@ -128,6 +128,10 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
+                    # Fetch old type before deleting
+                    OLD_TYPE=$(cat "/root/vm_type_${vm_name#tasin-vm-}.info" 2>/dev/null)
+                    if [ -z "$OLD_TYPE" ]; then OLD_TYPE="vps"; fi
+                    
                     docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
@@ -137,7 +141,7 @@ manage_vm_menu() {
                     log_msg "VM Wiped: $vm_name"
                     echo -e " ${GREEN}✔ VM Wiped.${NC} Sending to creation menu..."
                     sleep 2
-                    create_vm "${vm_name#tasin-vm-}" 
+                    create_vm "$OLD_TYPE" "${vm_name#tasin-vm-}" 
                     return
                 fi
                 ;;
@@ -151,6 +155,7 @@ manage_vm_menu() {
                     rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
                     rm -f "/root/dmi_product_${vm_name#tasin-vm-}.info"
                     rm -f "/root/dmi_vendor_${vm_name#tasin-vm-}.info"
+                    rm -f "/root/vm_type_${vm_name#tasin-vm-}.info"
                     log_msg "VM Deleted: $vm_name"
                     echo -e " ${GREEN}✔ Deleted.${NC}"
                     sleep 1
@@ -163,12 +168,16 @@ manage_vm_menu() {
     done
 }
 
+# Accepts: $1 = VM_TYPE (vps/vds), $2 = REINSTALL_NAME (optional)
 create_vm() {
-    if [ -n "$1" ]; then
-        VM_ID_NAME=$1
+    local VM_TYPE=${1:-vps}
+    local REINSTALL_NAME=${2:-}
+    
+    if [ -n "$REINSTALL_NAME" ]; then
+        VM_ID_NAME=$REINSTALL_NAME
         clear
         echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "         ${WHITE}REINSTALLING: ${VM_ID_NAME}${NC}"
+        echo -e "         ${WHITE}REINSTALLING: ${VM_ID_NAME} (${VM_TYPE^^})${NC}"
         echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
         echo -n " Set New Root Password: "
         read -r VM_PASS
@@ -176,7 +185,7 @@ create_vm() {
     else
         clear
         echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "         ${WHITE}CREATE NEW INSTANCE${NC}"
+        echo -e "         ${WHITE}CREATE NEW INSTANCE (${VM_TYPE^^})${NC}"
         echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
         echo -n " 1. Enter Hostname (e.g. web1): "
         read -r INPUT_NAME
@@ -192,6 +201,10 @@ create_vm() {
     CPU_FILE="/root/cpu_$VM_ID_NAME.info"
     DMI_PRODUCT_FILE="/root/dmi_product_$VM_ID_NAME.info"
     DMI_VENDOR_FILE="/root/dmi_vendor_$VM_ID_NAME.info"
+    TYPE_FILE="/root/vm_type_$VM_ID_NAME.info"
+
+    # Save the VM Type for future tracking
+    echo "$VM_TYPE" > "$TYPE_FILE"
 
     # ==========================================
     # OS SELECTION
@@ -294,6 +307,11 @@ create_vm() {
     echo -e "         ${WHITE}RESOURCE ALLOCATION TYPE${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
     echo -e " Hypervisor Status: $KVM_MSG"
+    if [ "$VM_TYPE" == "vds" ]; then
+        echo -e " Mode: ${PURPLE}VDS (Full KVM /dev/kvm mapped into container)${NC}"
+    else
+        echo -e " Mode: ${GREEN}VPS (Software Virtualization, No KVM access)${NC}"
+    fi
     echo -e ""
     echo -e " 1) ${GREEN}Dedicated Resources${NC} (Hard Limit)"
     echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS)"
@@ -442,11 +460,24 @@ create_vm() {
     # APPLY RESOURCE LOGIC
     if [ "$MODE" == "dedicated" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
-        if [ "$HAS_KVM" = true ]; then
-             CMD="$CMD --device /dev/kvm"
-        fi
     elif [ "$MODE" == "shared" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM"
+    fi
+
+    # ==========================================
+    # APPLY VDS / VPS KVM LOGIC
+    # ==========================================
+    if [ "$VM_TYPE" == "vds" ]; then
+        if [ "$HAS_KVM" = true ]; then
+            CMD="$CMD --device /dev/kvm"
+            log_msg "VDS Created: Mapped /dev/kvm to $VM_NAME"
+        else
+            echo -e " ${RED}✘ CRITICAL: Host KVM lost during creation. VDS cannot be formed.${NC}"
+            sleep 3
+            return
+        fi
+    else
+        log_msg "VPS Created: Standard software mode for $VM_NAME"
     fi
 
     # ADD CPU SPOOFING
@@ -535,7 +566,7 @@ UPTIME_WRAP
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
             
             # Install Dependencies
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps >/dev/null 2>&1"
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps cpu-checker >/dev/null 2>&1"
             
             # Redirect Neofetch Host detection to our custom mounted file
             if [ -n "$MODEL_NAME" ]; then
@@ -570,7 +601,7 @@ DOCKER_START
 
             echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
         else
-            docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
+            docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps cpu-checker >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
             
             # Redirect Neofetch Host detection to our custom mounted file
             if [ -n "$MODEL_NAME" ]; then
@@ -624,7 +655,15 @@ while true; do
         for vm in "${VMS[@]}"; do
             STATE=$(get_status "$vm")
             DISPLAY_NAME=${vm#tasin-vm-}
-            echo -e "  ${WHITE}[$i]${NC} $DISPLAY_NAME  $STATE"
+            
+            # Check VM Type for UI Tag
+            if [ -f "/root/vm_type_$DISPLAY_NAME.info" ] && [ "$(cat /root/vm_type_$DISPLAY_NAME.info)" == "vds" ]; then
+                TYPE_TAG="${PURPLE}[VDS]${NC}"
+            else
+                TYPE_TAG="${GREEN}[VPS]${NC}"
+            fi
+            
+            echo -e "  ${WHITE}[$i]${NC} $DISPLAY_NAME ${TYPE_TAG}  $STATE"
             ((i++))
         done
     fi
@@ -638,7 +677,38 @@ while true; do
     read -r CHOICE
     
     if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
-         create_vm
+        clear
+        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+        echo -e "         ${WHITE}SELECT CREATION TYPE${NC}"
+        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+        
+        if [ -c /dev/kvm ]; then
+            KVM_STAT="${GREEN}Available${NC}"
+        else
+            KVM_STAT="${RED}Not Available${NC}"
+        fi
+        
+        echo -e " Host KVM Status: $KVM_STAT"
+        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+        echo -e "  1) ${GREEN}Create VPS${NC} (Standard Software Virtualization)"
+        echo -e "  2) ${PURPLE}Create VDS${NC} (Full KVM Acceleration)"
+        echo -e "  0) Back"
+        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+        echo -n " Select [0-2]: "
+        read -r create_type
+        
+        case "$create_type" in
+            1) create_vm "vps" ;;
+            2) 
+                if [ -c /dev/kvm ]; then
+                    create_vm "vds"
+                else
+                    echo -e " ${RED}✘ Cannot create VDS: Host does not have full KVM (/dev/kvm missing).${NC}"
+                    sleep 3
+                fi
+                ;;
+            *) ;;
+        esac
     elif [[ "$CHOICE" == "f" || "$CHOICE" == "F" ]]; then
          fix_docker
     elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
