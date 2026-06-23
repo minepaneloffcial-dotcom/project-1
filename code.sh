@@ -33,6 +33,22 @@ get_status() {
     fi
 }
 
+# Function to properly check if REAL KVM is available
+check_real_kvm() {
+    # 1. Check if CPU actually supports Hardware Virtualization (vmx for Intel, svm for AMD)
+    if ! grep -Eq '(vmx|svm)' /proc/cpuinfo; then
+        echo "false"
+        return
+    fi
+
+    # 2. Check if /dev/kvm is a real character device (not a folder)
+    if [ -c /dev/kvm ]; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
 # ==================================================
 #       DOCKER FIX (OVERLAYFS ERROR)
 # ==================================================
@@ -279,7 +295,6 @@ create_vm() {
     read -r SPOOF_IP
 
     if [ -n "$SPOOF_IP" ]; then
-        # Extract the first 3 octets to create a /24 subnet
         SUBNET=$(echo "$SPOOF_IP" | awk -F. '{print $1"."$2"."$3".0/24"}')
         docker network rm "net_$VM_NAME" >/dev/null 2>&1
         NET_ERR=$(docker network create --subnet="$SUBNET" "net_$VM_NAME" 2>&1)
@@ -295,11 +310,10 @@ create_vm() {
     # RESOURCE ALLOCATION (RAM & CPU)
     # ==========================================
     clear
-    if [ -c /dev/kvm ]; then
-        HAS_KVM=true
-        KVM_MSG="${GREEN}Detected (/dev/kvm)${NC}"
+    HAS_KVM=$(check_real_kvm)
+    if [ "$HAS_KVM" == "true" ]; then
+        KVM_MSG="${GREEN}Detected (Real Hardware KVM)${NC}"
     else
-        HAS_KVM=false
         KVM_MSG="${RED}Not Detected (Software Mode)${NC}"
     fi
 
@@ -465,15 +479,17 @@ create_vm() {
     fi
 
     # ==========================================
-    # APPLY VDS / VPS KVM LOGIC
+    # APPLY VDS / VPS KVM LOGIC (STRICT CHECK)
     # ==========================================
     if [ "$VM_TYPE" == "vds" ]; then
-        if [ "$HAS_KVM" = true ]; then
+        # Double check real KVM right before creation
+        if [ "$(check_real_kvm)" == "true" ]; then
             CMD="$CMD --device /dev/kvm"
             log_msg "VDS Created: Mapped /dev/kvm to $VM_NAME"
         else
-            echo -e " ${RED}✘ CRITICAL: Host KVM lost during creation. VDS cannot be formed.${NC}"
-            sleep 3
+            echo -e " ${RED}✘ CRITICAL: Host KVM extensions are missing. VDS creation aborted.${NC}"
+            echo -e " ${YELLOW}Note: Creating a folder with 'mkdir /dev/kvm' does NOT give you KVM.${NC}"
+            sleep 4
             return
         fi
     else
@@ -485,7 +501,7 @@ create_vm() {
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # ADD DMI MODEL SPOOFING (Mounted to /etc/ to avoid kernel permission errors)
+    # ADD DMI MODEL SPOOFING
     if [ -n "$MODEL_NAME" ]; then
         CMD="$CMD -v $DMI_PRODUCT_FILE:/etc/custom_product_name:ro"
         CMD="$CMD -v $DMI_VENDOR_FILE:/etc/custom_sys_vendor:ro"
@@ -540,10 +556,9 @@ create_vm() {
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
 
-        # 2. FIX UPTIME: Override uptime command to show VM-only uptime (starts from 0)
+        # 2. FIX UPTIME
         cat << 'UPTIME_WRAP' > /tmp/uptime_wrap
 #!/bin/bash
-# Get uptime of PID 1 (Container start time, not Host time)
 SEC=$(ps -p 1 -o etimes= | awk '{print $1}')
 if [ -z "$SEC" ]; then
     /usr/bin/uptime
@@ -558,36 +573,23 @@ UPTIME_WRAP
         docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/uptime"
         rm /tmp/uptime_wrap
 
-        # 3. Install Packages (Neofetch remains 100% default, no config edits)
+        # 3. Install Packages
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
-            
-            # Pre-configure daemon.json
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
-            
-            # Install Dependencies
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps cpu-checker >/dev/null 2>&1"
             
-            # Redirect Neofetch Host detection to our custom mounted file
             if [ -n "$MODEL_NAME" ]; then
                 docker exec "$VM_NAME" bash -c "sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch"
                 docker exec "$VM_NAME" bash -c "sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch"
             fi
             
-            # Add Docker Official Repo (Fixed GPG Key fetching)
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg"
             docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
-            
-            # Install Docker CE
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1"
-            
-            # Start Docker via systemctl
             docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1"
-            
-            # FALLBACK
             docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 & fi"
             
-            # Auto-start script
             cat << 'DOCKER_START' > /tmp/start_docker.sh
 #!/bin/bash
 if ! docker ps >/dev/null 2>&1; then
@@ -603,9 +605,7 @@ DOCKER_START
         else
             docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps cpu-checker >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
             
-            # Redirect Neofetch Host detection to our custom mounted file
             if [ -n "$MODEL_NAME" ]; then
-                # Wait for neofetch to install before patching
                 sleep 10
                 docker exec "$VM_NAME" $VM_SHELL -c "if [ -f /usr/bin/neofetch ]; then sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch; fi"
                 docker exec "$VM_NAME" $VM_SHELL -c "if [ -f /usr/bin/neofetch ]; then sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch; fi"
@@ -639,6 +639,11 @@ DOCKER_START
 # ==================================================
 #       MAIN LOOP
 # ==================================================
+
+# Auto-clean fake /dev/kvm directories made by users
+if [ -d /dev/kvm ] && [ ! -c /dev/kvm ]; then
+    rmdir /dev/kvm 2>/dev/null
+fi
 
 while true; do
     clear
@@ -682,7 +687,7 @@ while true; do
         echo -e "         ${WHITE}SELECT CREATION TYPE${NC}"
         echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
         
-        if [ -c /dev/kvm ]; then
+        if [ "$(check_real_kvm)" == "true" ]; then
             KVM_STAT="${GREEN}Available${NC}"
         else
             KVM_STAT="${RED}Not Available${NC}"
@@ -700,11 +705,12 @@ while true; do
         case "$create_type" in
             1) create_vm "vps" ;;
             2) 
-                if [ -c /dev/kvm ]; then
+                if [ "$(check_real_kvm)" == "true" ]; then
                     create_vm "vds"
                 else
-                    echo -e " ${RED}✘ Cannot create VDS: Host does not have full KVM (/dev/kvm missing).${NC}"
-                    sleep 3
+                    echo -e " ${RED}✘ Cannot create VDS: Host CPU does not support KVM extensions.${NC}"
+                    echo -e " ${YELLOW}Tip: Running 'mkdir /dev/kvm' will not work. You must use a real dedicated server.${NC}"
+                    sleep 4
                 fi
                 ;;
             *) ;;
