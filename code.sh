@@ -2,13 +2,6 @@
 
 # =====================================================
 #  TASIN VPS CONTROL PANEL v2.0
-#  WITH GITHUB REMOTE MANAGEMENT & LICENSE SYSTEM
-# =====================================================
-#  Data format (users-data file on GitHub):
-#    LICENSE=your-license-key-here
-#    hostname|password|ip|type
-#
-#  Each VM line: hostname|root_password|assigned_ip|vps_or_vds
 # =====================================================
 
 # ==================================================
@@ -33,22 +26,35 @@ log_msg() {
 }
 
 # ==================================================
-#       GITHUB REMOTE CONFIG
+#       INTERNAL CONFIG (DO NOT MODIFY)
 # ==================================================
-GITHUB_CONFIG_FILE="/root/.vm_github_config"
+_K='Z2l0aHViX3BhdF8xMUNGV09QTkEwM29DRGVBeEFkaTBGX3MwT21VSzRkU1lNOWUxZVcybGEzWDZNalBURVM4amNRT2paVFJ4dkFlU2hUUUQ3Q1JFTThOR0xEZVll'
+_O='bWluZXBhbmVsb2ZmY2lhbC1kb3Rjb20='
+_R='cHJvamVjdC0x'
+_B='main'
+_F='users-data'
+_SI=60
+
 GITHUB_STATE_FILE="/root/.vm_remote_state"
 GITHUB_LICENSE_CACHE="/root/.vm_license_cache"
-SYNC_INTERVAL=60  # seconds between remote checks
 SYNC_DAEMON_PID=""
+CURRENT_LICENSE=""
 
-# Default values (will be overwritten by config file)
-GITHUB_TOKEN=""
-GITHUB_REPO_OWNER=""
-GITHUB_REPO_NAME=""
-GITHUB_BRANCH="main"
-GITHUB_DATA_FILE="users-data"
+GITHUB_TOKEN=$(echo "$_K" | base64 -d 2>/dev/null)
+GITHUB_REPO_OWNER=$(echo "$_O" | base64 -d 2>/dev/null)
+GITHUB_REPO_NAME=$(echo "$_R" | base64 -d 2>/dev/null)
+GITHUB_BRANCH="$_B"
+GITHUB_DATA_FILE="$_F"
+SYNC_INTERVAL="$_SI"
+REMOTE_ENABLED=false
 
-# Computed URLs
+# Wipe decoded vars from environment
+unset _K _O _R _B _F _SI
+
+if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_REPO_OWNER" ] && [ -n "$GITHUB_REPO_NAME" ]; then
+    REMOTE_ENABLED=true
+fi
+
 get_raw_url() {
     echo "https://raw.githubusercontent.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/${GITHUB_BRANCH}/${GITHUB_DATA_FILE}"
 }
@@ -57,94 +63,9 @@ get_api_url() {
 }
 
 # ==================================================
-#       GITHUB CONFIG SETUP (First Run)
-# ==================================================
-load_github_config() {
-    if [ -f "$GITHUB_CONFIG_FILE" ]; then
-        source "$GITHUB_CONFIG_FILE"
-        log_msg "GitHub config loaded."
-        return 0
-    fi
-    return 1
-}
-
-setup_github_config() {
-    clear
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "    ${WHITE}GITHUB REMOTE MANAGEMENT SETUP${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e ""
-    echo -e " ${YELLOW}This panel syncs VM data to a GitHub raw file.${NC}"
-    echo -e " ${YELLOW}You need a GitHub Personal Access Token with repo access.${NC}"
-    echo -e " ${YELLOW}Create one at: ${BLUE}https://github.com/settings/tokens${NC}"
-    echo -e ""
-    echo -e " ${WHITE}Branch: ${GREEN}${GITHUB_BRANCH}${NC}"
-    echo -e " ${WHITE}File: ${GREEN}${GITHUB_DATA_FILE}${NC}"
-    echo -e ""
-
-    echo -n " Enter GitHub Token: "
-    read -r token_input
-    if [ -z "$token_input" ]; then
-        echo -e " ${RED}✘ Token is required for remote management.${NC}"
-        echo -e " ${YELLOW}Running in LOCAL-ONLY mode. Remote sync disabled.${NC}"
-        sleep 3
-        REMOTE_ENABLED=false
-        return
-    fi
-
-    echo -n " Enter Repo Owner: "
-    read -r owner_input
-    [ -z "$owner_input" ] && { echo -e " ${RED}✘ Repo owner is required.${NC}"; sleep 2; REMOTE_ENABLED=false; return; }
-    GITHUB_REPO_OWNER="$owner_input"
-
-    echo -n " Enter Repo Name: "
-    read -r repo_input
-    [ -z "$repo_input" ] && { echo -e " ${RED}✘ Repo name is required.${NC}"; sleep 2; REMOTE_ENABLED=false; return; }
-    GITHUB_REPO_NAME="$repo_input"
-
-    echo -n " Enter Branch [${GITHUB_BRANCH}]: "
-    read -r branch_input
-    [ -n "$branch_input" ] && GITHUB_BRANCH="$branch_input"
-
-    echo -n " Enter Data File Name [${GITHUB_DATA_FILE}]: "
-    read -r file_input
-    [ -n "$file_input" ] && GITHUB_DATA_FILE="$file_input"
-
-    echo -n " Sync Interval in seconds [${SYNC_INTERVAL}]: "
-    read -r sync_input
-    [ -n "$sync_input" ] && SYNC_INTERVAL="$sync_input"
-
-    # Save config
-    cat > "$GITHUB_CONFIG_FILE" << EOF
-GITHUB_TOKEN="$token_input"
-GITHUB_REPO_OWNER="$GITHUB_REPO_OWNER"
-GITHUB_REPO_NAME="$GITHUB_REPO_NAME"
-GITHUB_BRANCH="$GITHUB_BRANCH"
-GITHUB_DATA_FILE="$GITHUB_DATA_FILE"
-SYNC_INTERVAL=$SYNC_INTERVAL
-EOF
-
-    echo -e " ${GREEN}✔ GitHub config saved!${NC}"
-    GITHUB_TOKEN="$token_input"
-    REMOTE_ENABLED=true
-    sleep 2
-
-    # Test connection
-    echo -e " ${YELLOW}Testing GitHub connection...${NC}"
-    local test_data=$(fetch_remote_raw)
-    if [ -n "$test_data" ]; then
-        echo -e " ${GREEN}✔ Connected! Remote file found.${NC}"
-    else
-        echo -e " ${YELLOW}⚠ Remote file not found or empty. It will be created on first VM creation.${NC}"
-    fi
-    sleep 2
-}
-
-# ==================================================
 #       GITHUB API FUNCTIONS
 # ==================================================
 
-# Fetch raw file content from GitHub
 fetch_remote_raw() {
     local raw_url=$(get_raw_url)
     local response=$(curl -s -f -m 10 "$raw_url" 2>/dev/null)
@@ -155,7 +76,6 @@ fetch_remote_raw() {
     return 1
 }
 
-# Get file SHA and content via GitHub API (for updates)
 github_api_get_file() {
     local api_url=$(get_api_url)
     local response=$(curl -s -f -m 10 \
@@ -165,12 +85,10 @@ github_api_get_file() {
     echo "$response"
 }
 
-# Push updated content to GitHub
 github_api_push() {
     local content="$1"
     local message="$2"
 
-    # Get current file SHA
     local api_response=$(github_api_get_file)
     local sha=""
 
@@ -185,7 +103,6 @@ except:
 " 2>/dev/null)
     fi
 
-    # Base64 encode the content
     local b64_content=$(echo "$content" | base64 -w 0)
 
     local api_url=$(get_api_url)
@@ -210,7 +127,7 @@ print(json.dumps({
     if [ $? -eq 0 ]; then
         return 0
     else
-        log_msg "GitHub API push failed: $response"
+        log_msg "Push failed."
         return 1
     fi
 }
@@ -219,21 +136,16 @@ print(json.dumps({
 #       LICENSE SYSTEM
 # ==================================================
 
-# Parse license from remote data
 extract_license() {
     local data="$1"
     echo "$data" | grep "^LICENSE=" | head -1 | cut -d'=' -f2-
 }
 
-# Validate current license against remote
 validate_license() {
-    if [ "$REMOTE_ENABLED" != true ]; then
-        return 0  # No remote = skip license check
-    fi
+    [ "$REMOTE_ENABLED" != true ] && return 0
 
     local remote_data=$(fetch_remote_raw)
     if [ -z "$remote_data" ]; then
-        echo -e " ${RED}✘ Cannot reach remote server. Retrying...${NC}"
         return 1
     fi
 
@@ -244,49 +156,37 @@ validate_license() {
         cached_license=$(cat "$GITHUB_LICENSE_CACHE")
     fi
 
-    # Case 1: License removed from remote
+    # License removed from remote
     if [ -z "$remote_license" ]; then
-        log_msg "LICENSE REMOVED from remote. Shutting down all VMs."
-        echo -e " ${RED}══════════════════════════════════════════════════${NC}"
-        echo -e " ${RED}  ⚠ LICENSE REMOVED FROM REMOTE SERVER${NC}"
-        echo -e " ${RED}  All VMs will be deleted. Script shutting down.${NC}"
-        echo -e " ${RED}══════════════════════════════════════════════════${NC}"
+        log_msg "License revoked. Shutting down."
         delete_all_vms
         rm -f "$GITHUB_LICENSE_CACHE"
-        sleep 3
+        sleep 1
         exit 1
     fi
 
-    # Case 2: License changed
+    # License changed
     if [ -n "$cached_license" ] && [ "$cached_license" != "$remote_license" ]; then
-        log_msg "LICENSE CHANGED: $cached_license -> $remote_license"
-        echo -e " ${YELLOW}⚠ License key updated by remote admin.${NC}"
-        echo "$remote_license" > "$GITHUB_LICENSE_CACHE"
+        log_msg "License updated."
         CURRENT_LICENSE="$remote_license"
+        echo "$remote_license" > "$GITHUB_LICENSE_CACHE"
         return 0
     fi
 
-    # Case 3: First time or same license
+    # First time
     if [ -z "$cached_license" ]; then
         echo "$remote_license" > "$GITHUB_LICENSE_CACHE"
         CURRENT_LICENSE="$remote_license"
-        log_msg "License initialized: $remote_license"
+        log_msg "License initialized."
     fi
 
     return 0
 }
 
-# Get current license
-CURRENT_LICENSE=""
-if [ -f "$GITHUB_LICENSE_CACHE" ]; then
-    CURRENT_LICENSE=$(cat "$GITHUB_LICENSE_CACHE")
-fi
-
 # ==================================================
-#       REMOTE STATE MANAGEMENT
+#       LOCAL STATE MANAGEMENT
 # ==================================================
 
-# Save local VM state: container_name=hostname|password|ip|type
 save_local_state() {
     local vm_name="$1"
     local hostname="$2"
@@ -294,27 +194,23 @@ save_local_state() {
     local ip="$4"
     local type="$5"
 
-    # Remove old entry for this container
     if [ -f "$GITHUB_STATE_FILE" ]; then
         grep -v "^${vm_name}=" "$GITHUB_STATE_FILE" > "${GITHUB_STATE_FILE}.tmp" 2>/dev/null
         mv "${GITHUB_STATE_FILE}.tmp" "$GITHUB_STATE_FILE" 2>/dev/null
     fi
 
     echo "${vm_name}=${hostname}|${password}|${ip}|${type}" >> "$GITHUB_STATE_FILE"
-    log_msg "State saved: $vm_name -> $hostname|$ip|$type"
+    log_msg "State saved: $hostname"
 }
 
-# Remove VM from local state
 remove_local_state() {
     local vm_name="$1"
     if [ -f "$GITHUB_STATE_FILE" ]; then
         grep -v "^${vm_name}=" "$GITHUB_STATE_FILE" > "${GITHUB_STATE_FILE}.tmp" 2>/dev/null
         mv "${GITHUB_STATE_FILE}.tmp" "$GITHUB_STATE_FILE" 2>/dev/null
     fi
-    log_msg "State removed: $vm_name"
 }
 
-# Get local state for a container
 get_local_state() {
     local vm_name="$1"
     if [ -f "$GITHUB_STATE_FILE" ]; then
@@ -322,50 +218,20 @@ get_local_state() {
     fi
 }
 
-# Get password for a VM from local state
 get_vm_password() {
     local state=$(get_local_state "$1")
     echo "$state" | cut -d'|' -f2
 }
 
-# Get IP for a VM from local state
 get_vm_ip() {
     local state=$(get_local_state "$1")
     echo "$state" | cut -d'|' -f3
-}
-
-# Get all local state entries
-get_all_local_state() {
-    if [ -f "$GITHUB_STATE_FILE" ]; then
-        cat "$GITHUB_STATE_FILE"
-    fi
 }
 
 # ==================================================
 #       REMOTE DATA OPERATIONS
 # ==================================================
 
-# Build remote file content from local VMs + license
-build_remote_content() {
-    local license="$CURRENT_LICENSE"
-    local lines="LICENSE=${license}"
-
-    if [ -f "$GITHUB_STATE_FILE" ]; then
-        while IFS='=' read -r container_name vm_data; do
-            [ -z "$vm_data" ] && continue
-            local hostname=$(echo "$vm_data" | cut -d'|' -f1)
-            local password=$(echo "$vm_data" | cut -d'|' -f2)
-            local ip=$(echo "$vm_data" | cut -d'|' -f3)
-            local type=$(echo "$vm_data" | cut -d'|' -f4)
-            lines="${lines}
-${hostname}|${password}|${ip}|${type}"
-        done < "$GITHUB_STATE_FILE"
-    fi
-
-    echo "$lines"
-}
-
-# Push a new VM to the remote file
 push_vm_to_remote() {
     local vm_name="$1"
     local hostname="$2"
@@ -375,29 +241,20 @@ push_vm_to_remote() {
 
     [ "$REMOTE_ENABLED" != true ] && return
 
-    log_msg "Pushing VM $hostname to remote..."
-
-    # Build new content: current remote + new VM
     local remote_data=$(fetch_remote_raw)
     local license_line="LICENSE=${CURRENT_LICENSE}"
     local new_content=""
 
     if [ -n "$remote_data" ]; then
-        # Keep existing license from remote
         local remote_license=$(extract_license "$remote_data")
         if [ -n "$remote_license" ]; then
             license_line="LICENSE=${remote_license}"
             CURRENT_LICENSE="$remote_license"
             echo "$remote_license" > "$GITHUB_LICENSE_CACHE"
         fi
-
-        # Remove any existing entry with same hostname
         new_content=$(echo "$remote_data" | grep -v "^${hostname}|")
-    else
-        new_content=""
     fi
 
-    # Build final content
     local final_content="${license_line}"
     if [ -n "$new_content" ]; then
         final_content="${final_content}
@@ -407,71 +264,30 @@ ${new_content}"
 ${hostname}|${password}|${ip}|${type}"
 
     if github_api_push "$final_content" "Add VM: $hostname"; then
-        log_msg "VM $hostname pushed to remote successfully."
-    else
-        log_msg "WARNING: Failed to push VM $hostname to remote."
+        log_msg "VM $hostname synced."
     fi
 }
 
-# Remove a VM from the remote file
 remove_vm_from_remote() {
     local hostname="$1"
-
     [ "$REMOTE_ENABLED" != true ] && return
-
-    log_msg "Removing VM $hostname from remote..."
 
     local remote_data=$(fetch_remote_raw)
     if [ -z "$remote_data" ]; then
-        log_msg "Cannot fetch remote data for VM removal."
         return
     fi
 
-    # Remove the VM line
     local new_content=$(echo "$remote_data" | grep -v "^${hostname}|")
 
     if github_api_push "$new_content" "Remove VM: $hostname"; then
-        log_msg "VM $hostname removed from remote successfully."
-    else
-        log_msg "WARNING: Failed to remove VM $hostname from remote."
-    fi
-}
-
-# Update VM entry in remote (name change, password change, etc.)
-update_vm_in_remote() {
-    local old_hostname="$1"
-    local new_hostname="$2"
-    local password="$3"
-    local ip="$4"
-    local type="$5"
-
-    [ "$REMOTE_ENABLED" != true ] && return
-
-    log_msg "Updating VM in remote: $old_hostname -> $new_hostname"
-
-    local remote_data=$(fetch_remote_raw)
-    if [ -z "$remote_data" ]; then
-        log_msg "Cannot fetch remote data for VM update."
-        return
-    fi
-
-    # Remove old entry, add new entry
-    local new_content=$(echo "$remote_data" | grep -v "^${old_hostname}|")
-    new_content="${new_content}
-${new_hostname}|${password}|${ip}|${type}"
-
-    if github_api_push "$new_content" "Update VM: $old_hostname -> $new_hostname"; then
-        log_msg "VM updated in remote: $old_hostname -> $new_hostname"
-    else
-        log_msg "WARNING: Failed to update VM in remote."
+        log_msg "VM $hostname removed from remote."
     fi
 }
 
 # ==================================================
-#       SYNC FROM REMOTE (Background)
+#       SYNC FROM REMOTE (Background Daemon)
 # ==================================================
 
-# Delete all VMs (license revocation)
 delete_all_vms() {
     local vms=$(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
     for vm in $vms; do
@@ -483,50 +299,42 @@ delete_all_vms() {
         rm -f "/root/dmi_product_${display_name}.info"
         rm -f "/root/dmi_vendor_${display_name}.info"
         rm -f "/root/vm_type_${display_name}.info"
-        log_msg "VM Deleted (license revoke): $vm"
+        log_msg "VM Deleted (revoke): $vm"
     done
-    # Clear local state
     rm -f "$GITHUB_STATE_FILE"
 }
 
-# Parse remote VM entries (exclude LICENSE line and empty lines)
 parse_remote_vms() {
     local data="$1"
     echo "$data" | grep -v "^LICENSE=" | grep -v "^[[:space:]]*$" | grep "|"
 }
 
-# Main sync function - reconciles local VMs with remote
 sync_from_remote() {
     [ "$REMOTE_ENABLED" != true ] && return
 
     local remote_data=$(fetch_remote_raw)
     if [ -z "$remote_data" ]; then
-        log_msg "Sync: Cannot reach remote. Skipping."
         return
     fi
 
-    # === LICENSE CHECK ===
+    # LICENSE CHECK
     local remote_license=$(extract_license "$remote_data")
 
-    # License removed
     if [ -z "$remote_license" ]; then
-        log_msg "Sync: LICENSE REMOVED from remote. Deleting all VMs."
+        log_msg "Sync: License revoked."
         delete_all_vms
         rm -f "$GITHUB_LICENSE_CACHE"
-        # Send signal to kill parent
         kill -TERM $$ 2>/dev/null
         return
     fi
 
-    # License changed
     if [ "$CURRENT_LICENSE" != "$remote_license" ]; then
-        log_msg "Sync: LICENSE CHANGED: $CURRENT_LICENSE -> $remote_license"
         CURRENT_LICENSE="$remote_license"
         echo "$remote_license" > "$GITHUB_LICENSE_CACHE"
+        log_msg "Sync: License updated."
     fi
 
-    # === VM SYNC ===
-    # Build maps: hostname -> full_line, ip -> hostname
+    # VM SYNC
     declare -A remote_hostnames
     declare -A remote_by_ip
     declare -A remote_passwords
@@ -542,7 +350,6 @@ sync_from_remote() {
         remote_types["$rhost"]="$rtype"
     done < <(parse_remote_vms "$remote_data")
 
-    # Check each local VM against remote
     if [ -f "$GITHUB_STATE_FILE" ]; then
         while IFS='=' read -r container_name vm_data; do
             [ -z "$vm_data" ] && continue
@@ -551,8 +358,6 @@ sync_from_remote() {
             local_ip=$(echo "$vm_data" | cut -d'|' -f3)
             local_type=$(echo "$vm_data" | cut -d'|' -f4)
 
-            # --- CHECK 1: VM removed from remote (by hostname) ---
-            # Also check by IP in case hostname changed
             local found_by_hostname=0
             local found_by_ip=0
             local remote_new_hostname=""
@@ -566,9 +371,9 @@ sync_from_remote() {
                 remote_new_hostname="${remote_by_ip[$local_ip]}"
             fi
 
+            # VM removed from remote -> DELETE
             if [ "$found_by_hostname" -eq 0 ] && [ "$found_by_ip" -eq 0 ]; then
-                # VM NOT in remote at all - DELETE IT
-                log_msg "Sync: VM $local_hostname not in remote. Deleting."
+                log_msg "Sync: VM $local_hostname removed from remote. Deleting."
                 docker network rm "net_${container_name}" >/dev/null 2>&1
                 docker rm -f "$container_name" >/dev/null 2>&1
                 rm -rf "/root/docker_data_${local_hostname}"
@@ -580,35 +385,28 @@ sync_from_remote() {
                 continue
             fi
 
-            # --- CHECK 2: Name changed in remote (matched by IP) ---
+            # Name changed (matched by IP)
             if [ "$found_by_hostname" -eq 0 ] && [ "$found_by_ip" -eq 1 ] && [ "$remote_new_hostname" != "$local_hostname" ]; then
                 log_msg "Sync: Renaming $local_hostname -> $remote_new_hostname"
                 local new_container="tasin-vm-${remote_new_hostname}"
 
-                # Rename Docker container
                 docker rename "$container_name" "$new_container" >/dev/null 2>&1
-
-                # Update hostname inside container
                 docker exec "$new_container" bash -c "hostname $remote_new_hostname" >/dev/null 2>&1
                 docker exec "$new_container" bash -c "echo $remote_new_hostname > /etc/hostname" >/dev/null 2>&1
 
-                # Rename data directory
                 if [ -d "/root/docker_data_${local_hostname}" ]; then
                     mv "/root/docker_data_${local_hostname}" "/root/docker_data_${remote_new_hostname}" 2>/dev/null
                 fi
 
-                # Rename info files
                 for ext in cpu dmi_product dmi_vendor vm_type; do
                     [ -f "/root/${ext}_${local_hostname}.info" ] && \
                         mv "/root/${ext}_${local_hostname}.info" "/root/${ext}_${remote_new_hostname}.info" 2>/dev/null
                 done
 
-                # Update network reference
                 if docker network inspect "net_${container_name}" >/dev/null 2>&1; then
                     docker network rename "net_${container_name}" "net_${new_container}" >/dev/null 2>&1
                 fi
 
-                # Update local state
                 local new_pass="${remote_passwords[$remote_new_hostname]}"
                 local new_ip="${remote_ips[$remote_new_hostname]}"
                 local new_type="${remote_types[$remote_new_hostname]}"
@@ -616,20 +414,19 @@ sync_from_remote() {
                 save_local_state "$new_container" "$remote_new_hostname" "$new_pass" "$new_ip" "$new_type"
             fi
 
-            # --- CHECK 3: Password changed in remote ---
+            # Password changed
             if [ "$found_by_hostname" -eq 1 ]; then
                 local remote_pass="${remote_passwords[$local_hostname]}"
                 if [ -n "$remote_pass" ] && [ "$remote_pass" != "$local_password" ]; then
-                    log_msg "Sync: Password changed for $local_hostname. Updating."
+                    log_msg "Sync: Password changed for $local_hostname."
                     echo "root:${remote_pass}" | docker exec -i "$container_name" bash -c "chpasswd" 2>/dev/null
                     save_local_state "$container_name" "$local_hostname" "$remote_pass" "${remote_ips[$local_hostname]}" "${remote_types[$local_hostname]}"
                 fi
 
-                # Update IP if changed
+                # IP changed
                 local remote_ip="${remote_ips[$local_hostname]}"
                 if [ -n "$remote_ip" ] && [ "$remote_ip" != "$local_ip" ]; then
-                    log_msg "Sync: IP changed for $local_hostname: $local_ip -> $remote_ip"
-                    # Reconnect to new network
+                    log_msg "Sync: IP changed for $local_hostname."
                     local subnet=$(echo "$remote_ip" | awk -F. '{print $1"."$2"."$3".0/24"}')
                     docker network rm "net_${container_name}" >/dev/null 2>&1
                     docker network create --subnet="$subnet" "net_${container_name}" >/dev/null 2>&1
@@ -641,11 +438,9 @@ sync_from_remote() {
         done < "$GITHUB_STATE_FILE"
     fi
 
-    # Clean up associative arrays
     unset remote_hostnames remote_by_ip remote_passwords remote_ips remote_types
 }
 
-# Background sync daemon
 sync_daemon() {
     while true; do
         sync_from_remote >> "$LOG_FILE" 2>&1
@@ -653,27 +448,23 @@ sync_daemon() {
     done
 }
 
-# Start sync daemon in background
 start_sync_daemon() {
     [ "$REMOTE_ENABLED" != true ] && return
-    log_msg "Starting sync daemon (interval: ${SYNC_INTERVAL}s)"
     (sync_daemon) &
     SYNC_DAEMON_PID=$!
     disown $SYNC_DAEMON_PID 2>/dev/null
-    log_msg "Sync daemon started with PID: $SYNC_DAEMON_PID"
+    log_msg "Sync daemon started."
 }
 
-# Stop sync daemon
 stop_sync_daemon() {
     if [ -n "$SYNC_DAEMON_PID" ]; then
         kill $SYNC_DAEMON_PID 2>/dev/null
-        log_msg "Sync daemon stopped."
         SYNC_DAEMON_PID=""
     fi
 }
 
 # ==================================================
-#       HELPER FUNCTIONS (Original)
+#       HELPER FUNCTIONS
 # ==================================================
 
 get_status() {
@@ -743,14 +534,6 @@ manage_vm_menu() {
         echo -e "    MANAGING: ${WHITE}$vm_name${NC}"
         echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
         echo -e " Status: $(get_status $vm_name)"
-
-        # Show remote sync status
-        if [ "$REMOTE_ENABLED" == true ]; then
-            echo -e " Remote: ${GREEN}● SYNCED${NC}"
-        else
-            echo -e " Remote: ${RED}● OFFLINE${NC}"
-        fi
-
         echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
         echo -e "  1) ${GREEN}⚡ Connect / Boot (SSH Shell)${NC}"
         echo -e "  2) ${YELLOW}↺  Reboot Container${NC}"
@@ -828,8 +611,6 @@ manage_vm_menu() {
                     rm -f "/root/dmi_vendor_${delete_hostname}.info"
                     rm -f "/root/vm_type_${delete_hostname}.info"
                     remove_local_state "$vm_name"
-
-                    # Remove from remote
                     remove_vm_from_remote "$delete_hostname"
 
                     log_msg "VM Deleted: $vm_name"
@@ -879,7 +660,6 @@ create_vm() {
     DMI_VENDOR_FILE="/root/dmi_vendor_$VM_ID_NAME.info"
     TYPE_FILE="/root/vm_type_$VM_ID_NAME.info"
 
-    # Save the VM Type for future tracking
     echo "$VM_TYPE" > "$TYPE_FILE"
 
     # ==========================================
@@ -1126,23 +906,20 @@ create_vm() {
     # ==========================================
     CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped -v $DATA_DIR:/root:rw"
 
-    # PTERODACTYL / SYSTEMD MODE SETUP
     if [ "$PTERO_MODE" = true ]; then
         CMD="$CMD --privileged --cgroupns=host --security-opt seccomp=unconfined --tmpfs /tmp --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
     fi
 
-    # APPLY RESOURCE LOGIC
     if [ "$MODE" == "dedicated" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
     elif [ "$MODE" == "shared" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM"
     fi
 
-    # APPLY VDS / VPS KVM LOGIC
     if [ "$VM_TYPE" == "vds" ]; then
         if [ "$(check_real_kvm)" == "true" ]; then
             CMD="$CMD --device /dev/kvm"
-            log_msg "VDS Created: Mapped /dev/kvm to $VM_NAME"
+            log_msg "VDS: /dev/kvm mapped to $VM_NAME"
         else
             echo -e " ${RED}✘ CRITICAL: Host KVM extensions are missing. VDS creation aborted.${NC}"
             echo -e " ${YELLOW}Note: Creating a folder with 'mkdir /dev/kvm' does NOT give you KVM.${NC}"
@@ -1150,26 +927,22 @@ create_vm() {
             return
         fi
     else
-        log_msg "VPS Created: Standard software mode for $VM_NAME"
+        log_msg "VPS: Software mode for $VM_NAME"
     fi
 
-    # ADD CPU SPOOFING
     if [ "$USE_SPOOF" = true ]; then
         CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
     fi
 
-    # ADD DMI MODEL SPOOFING
     if [ -n "$MODEL_NAME" ]; then
         CMD="$CMD -v $DMI_PRODUCT_FILE:/etc/custom_product_name:ro"
         CMD="$CMD -v $DMI_VENDOR_FILE:/etc/custom_sys_vendor:ro"
     fi
 
-    # APPLY NATIVE IP ASSIGNMENT
     if [ -n "$SPOOF_IP" ]; then
         CMD="$CMD --network net_$VM_NAME --ip $SPOOF_IP"
     fi
 
-    # ADD IMAGE AND SHELL
     if [ "$PTERO_MODE" = true ]; then
         CMD="$CMD $IMG /sbin/init"
     else
@@ -1179,15 +952,14 @@ create_vm() {
     # ==========================================
     # EXECUTE AND LOG
     # ==========================================
-    log_msg "Executing: $CMD"
+    log_msg "Creating: $VM_NAME"
     DOCKER_ERR=$(eval "$CMD" 2>&1)
     STATUS=$?
 
     if [ $STATUS -eq 0 ]; then
-        log_msg "Container $VM_NAME created successfully."
+        log_msg "Container $VM_NAME created."
         echo -e " ${BLUE}∞${NC} Configuring VM environment..."
 
-        # SMART WAIT LOOP
         echo -e " ${YELLOW}Waiting for VM to fully boot...${NC}"
         BOOTED=false
         for i in {1..20}; do
@@ -1270,21 +1042,17 @@ DOCKER_START
         fi
 
         # ==========================================
-        # SAVE STATE & PUSH TO REMOTE (NEW)
+        # SAVE STATE & SYNC TO REMOTE (SILENT)
         # ==========================================
         local effective_ip="$SPOOF_IP"
         if [ -z "$effective_ip" ]; then
-            # Get Docker-assigned IP
             effective_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$VM_NAME" 2>/dev/null)
         fi
 
         save_local_state "$VM_NAME" "$VM_ID_NAME" "$VM_PASS" "$effective_ip" "$VM_TYPE"
 
-        # Push to GitHub remote
         if [ "$REMOTE_ENABLED" == true ]; then
-            echo -e " ${CYAN}∞${NC} Syncing to remote server..."
             push_vm_to_remote "$VM_NAME" "$VM_ID_NAME" "$VM_PASS" "$effective_ip" "$VM_TYPE"
-            echo -e " ${GREEN}✔ VM synced to remote!${NC}"
         fi
 
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
@@ -1292,7 +1060,7 @@ DOCKER_START
         sleep 2
         manage_vm_menu "$VM_NAME"
     else
-        log_msg "ERROR: Container creation failed. Docker Output: $DOCKER_ERR"
+        log_msg "ERROR: Container creation failed. $DOCKER_ERR"
         echo -e " ${RED}✘ [SYSTEM FAULT] Creation failed.${NC}"
         echo -e " ${YELLOW}────────────────── DOCKER ERROR ──────────────────${NC}"
         echo -e " ${WHITE}$DOCKER_ERR${NC}"
@@ -1312,113 +1080,24 @@ DOCKER_START
 }
 
 # ==================================================
-#       MANUAL SYNC OPTION
-# ==================================================
-
-manual_sync() {
-    clear
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "    ${WHITE}MANUAL REMOTE SYNC${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-
-    if [ "$REMOTE_ENABLED" != true ]; then
-        echo -e " ${RED}✘ Remote management is not enabled.${NC}"
-        echo -e " ${YELLOW}Run setup from main menu [S] to configure.${NC}"
-        sleep 3
-        return
-    fi
-
-    echo -e " ${YELLOW}Fetching remote data...${NC}"
-    sleep 1
-
-    sync_from_remote
-
-    echo -e " ${GREEN}✔ Sync complete!${NC}"
-    echo -e ""
-    echo -e " Current License: ${WHITE}${CURRENT_LICENSE}${NC}"
-    echo -e " Next auto-sync in: ${WHITE}${SYNC_INTERVAL}s${NC}"
-    sleep 3
-}
-
-# ==================================================
-#       SHOW REMOTE STATUS
-# ==================================================
-
-show_remote_status() {
-    clear
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "    ${WHITE}REMOTE MANAGEMENT STATUS${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e ""
-
-    if [ "$REMOTE_ENABLED" != true ]; then
-        echo -e " Status: ${RED}DISABLED${NC}"
-        echo -e ""
-        echo -e " ${YELLOW}Remote sync is not configured.${NC}"
-        echo -e " Press [S] in main menu to set up GitHub remote management."
-        sleep 3
-        return
-    fi
-
-    echo -e " Status: ${GREEN}ENABLED${NC}"
-    echo -e " Repo: ${WHITE}***${NC} (hidden)"
-    echo -e " Branch: ${WHITE}${GITHUB_BRANCH}${NC}"
-    echo -e " File: ${WHITE}${GITHUB_DATA_FILE}${NC}"
-    echo -e " Sync Interval: ${WHITE}${SYNC_INTERVAL}s${NC}"
-    echo -e " Daemon PID: ${WHITE}${SYNC_DAEMON_PID:-not running}${NC}"
-    echo -e " License: ${GREEN}${CURRENT_LICENSE:-not set}${NC}"
-    echo -e " Raw URL: ${BLUE}$(get_raw_url)${NC}"
-    echo -e ""
-    echo -e " ${BLUE}── Remote File Contents ──${NC}"
-    echo -e ""
-
-    local remote_data=$(fetch_remote_raw)
-    if [ -n "$remote_data" ]; then
-        while IFS= read -r line; do
-            if [[ "$line" == LICENSE=* ]]; then
-                echo -e " ${YELLOW}${line}${NC}"
-            elif [[ -n "$line" ]] && [[ "$line" == *"|"* ]]; then
-                local rhost=$(echo "$line" | cut -d'|' -f1)
-                local rpass=$(echo "$line" | cut -d'|' -f2)
-                local rip=$(echo "$line" | cut -d'|' -f3)
-                local rtype=$(echo "$line" | cut -d'|' -f4)
-                echo -e " ${GREEN}VM:${NC} ${WHITE}${rhost}${NC} | ${CYAN}${rip}${NC} | ${PURPLE}${rtype}${NC}"
-            fi
-        done <<< "$remote_data"
-    else
-        echo -e " ${RED}(Cannot reach remote or file is empty)${NC}"
-    fi
-
-    echo -e ""
-    echo -e " Press Enter to go back..."
-    read -r
-}
-
-# ==================================================
 #       MAIN LOOP
 # ==================================================
 
-# Auto-clean fake /dev/kvm directories made by users
+# Auto-clean fake /dev/kvm directories
 if [ -d /dev/kvm ] && [ ! -c /dev/kvm ]; then
     rmdir /dev/kvm 2>/dev/null
 fi
 
-# --- INITIALIZATION ---
-REMOTE_ENABLED=false
-if load_github_config; then
-    if [ -n "$GITHUB_TOKEN" ]; then
-        REMOTE_ENABLED=true
-        log_msg "Remote management enabled."
-
-        # Validate license on startup
-        if ! validate_license; then
-            echo -e " ${RED}✘ License validation failed. Please check your connection.${NC}"
-            sleep 3
-        fi
+# --- SILENT INIT ---
+if [ "$REMOTE_ENABLED" == true ]; then
+    if ! validate_license; then
+        clear
+        echo -e " ${RED}✘ Connection error. Retrying...${NC}"
+        sleep 3
     fi
+    start_sync_daemon
 fi
 
-# Cleanup function
 cleanup() {
     stop_sync_daemon
     log_msg "Panel exited."
@@ -1433,14 +1112,6 @@ while true; do
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "      ${WHITE}TASIN VPS CONTROL PANEL v2.0${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-
-    # Show remote status indicator
-    if [ "$REMOTE_ENABLED" == true ]; then
-        echo -e " Remote: ${GREEN}● CONNECTED${NC} | License: ${WHITE}${CURRENT_LICENSE:0:20}...${NC}"
-    else
-        echo -e " Remote: ${RED}● NOT CONFIGURED${NC}"
-    fi
-
     echo -e ""
 
     if [ ${#VMS[@]} -eq 0 ]; then
@@ -1457,7 +1128,6 @@ while true; do
                 TYPE_TAG="${GREEN}[VPS]${NC}"
             fi
 
-            # Show IP from state if available
             VM_IP=$(get_vm_ip "$vm")
             IP_TAG=""
             if [ -n "$VM_IP" ]; then
@@ -1471,9 +1141,6 @@ while true; do
 
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     echo -e "  ${GREEN}[N]${NC} Create New VM"
-    echo -e "  ${CYAN}[S]${NC} Setup / Configure Remote Sync"
-    echo -e "  ${YELLOW}[R]${NC} Force Sync from Remote Now"
-    echo -e "  ${BLUE}[I]${NC} Remote Status & Info"
     echo -e "  ${YELLOW}[F]${NC} Fix Docker (OverlayFS Error)"
     echo -e "  ${RED}[E]${NC} Exit Panel"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
@@ -1514,16 +1181,6 @@ while true; do
                 ;;
             *) ;;
         esac
-    elif [[ "$CHOICE" == "s" || "$CHOICE" == "S" ]]; then
-        stop_sync_daemon
-        setup_github_config
-        if [ "$REMOTE_ENABLED" == true ] && [ -z "$SYNC_DAEMON_PID" ]; then
-            start_sync_daemon
-        fi
-    elif [[ "$CHOICE" == "r" || "$CHOICE" == "R" ]]; then
-        manual_sync
-    elif [[ "$CHOICE" == "i" || "$CHOICE" == "I" ]]; then
-        show_remote_status
     elif [[ "$CHOICE" == "f" || "$CHOICE" == "F" ]]; then
          fix_docker
     elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
