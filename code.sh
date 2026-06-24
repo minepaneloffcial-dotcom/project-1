@@ -89,34 +89,56 @@ github_api_push() {
     local content="$1"
     local message="$2"
 
-    local api_response=$(github_api_get_file)
+    # Get current file SHA (needed for updates, omit for new file)
     local sha=""
+    local file_exists=false
+    local api_response=$(curl -s -m 10 \
+        -H "Authorization: token $GITHUB_TOKEN" \
+        -H "Accept: application/vnd.github.v3+json" \
+        "$(get_api_url)?ref=${GITHUB_BRANCH}" 2>/dev/null)
 
     if [ -n "$api_response" ]; then
         sha=$(echo "$api_response" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
-    print(d.get('sha', ''))
+    if 'sha' in d:
+        print(d['sha'])
 except:
     pass
 " 2>/dev/null)
+        if [ -n "$sha" ]; then
+            file_exists=true
+        fi
     fi
 
-    local b64_content=$(echo "$content" | base64 -w 0)
-
+    local b64_content=$(printf '%s' "$content" | base64 -w 0)
     local api_url=$(get_api_url)
-    local json_payload=$(python3 -c "
-import json
-print(json.dumps({
-    'message': '$message',
-    'content': '$b64_content',
-    'sha': '$sha',
-    'branch': '$GITHUB_BRANCH'
-}))
-" 2>/dev/null)
 
-    local response=$(curl -s -f -m 15 \
+    # Build JSON - omit sha for new file creation
+    local json_payload
+    if [ "$file_exists" == true ]; then
+        json_payload=$(python3 -c "
+import json,sys
+print(json.dumps({
+    'message': sys.argv[1],
+    'content': sys.argv[2],
+    'sha': sys.argv[3],
+    'branch': sys.argv[4]
+}))
+" "$message" "$b64_content" "$sha" "$GITHUB_BRANCH" 2>/dev/null)
+    else
+        json_payload=$(python3 -c "
+import json,sys
+print(json.dumps({
+    'message': sys.argv[1],
+    'content': sys.argv[2],
+    'branch': sys.argv[3]
+}))
+" "$message" "$b64_content" "$GITHUB_BRANCH" 2>/dev/null)
+    fi
+
+    local http_code=$(curl -s -o /tmp/_gh_push_resp -w '%{http_code}' -m 15 \
         -X PUT \
         -H "Authorization: token $GITHUB_TOKEN" \
         -H "Content-Type: application/json" \
@@ -124,10 +146,13 @@ print(json.dumps({
         -d "$json_payload" \
         "$api_url" 2>/dev/null)
 
-    if [ $? -eq 0 ]; then
+    if [ "$http_code" == "200" ] || [ "$http_code" == "201" ]; then
+        rm -f /tmp/_gh_push_resp
         return 0
     else
-        log_msg "Push failed."
+        local err_body=$(cat /tmp/_gh_push_resp 2>/dev/null)
+        log_msg "Push failed HTTP $http_code: $err_body"
+        rm -f /tmp/_gh_push_resp
         return 1
     fi
 }
@@ -145,8 +170,9 @@ validate_license() {
     [ "$REMOTE_ENABLED" != true ] && return 0
 
     local remote_data=$(fetch_remote_raw)
+    # If file doesn't exist yet (first run), that's OK - skip
     if [ -z "$remote_data" ]; then
-        return 1
+        return 0
     fi
 
     local remote_license=$(extract_license "$remote_data")
@@ -156,13 +182,18 @@ validate_license() {
         cached_license=$(cat "$GITHUB_LICENSE_CACHE")
     fi
 
-    # License removed from remote
-    if [ -z "$remote_license" ]; then
+    # License removed from remote (file exists but no LICENSE= line)
+    if [ -z "$remote_license" ] && [ -n "$cached_license" ]; then
         log_msg "License revoked. Shutting down."
         delete_all_vms
         rm -f "$GITHUB_LICENSE_CACHE"
         sleep 1
         exit 1
+    fi
+
+    # License removed but was never set (fresh file, no LICENSE line yet)
+    if [ -z "$remote_license" ] && [ -z "$cached_license" ]; then
+        return 0
     fi
 
     # License changed
@@ -241,6 +272,7 @@ push_vm_to_remote() {
 
     [ "$REMOTE_ENABLED" != true ] && return
 
+    # Fetch current remote to preserve existing data + license
     local remote_data=$(fetch_remote_raw)
     local license_line="LICENSE=${CURRENT_LICENSE}"
     local new_content=""
@@ -252,9 +284,11 @@ push_vm_to_remote() {
             CURRENT_LICENSE="$remote_license"
             echo "$remote_license" > "$GITHUB_LICENSE_CACHE"
         fi
+        # Keep all lines except this VM's old entry
         new_content=$(echo "$remote_data" | grep -v "^${hostname}|")
     fi
 
+    # Build final content
     local final_content="${license_line}"
     if [ -n "$new_content" ]; then
         final_content="${final_content}
@@ -263,9 +297,18 @@ ${new_content}"
     final_content="${final_content}
 ${hostname}|${password}|${ip}|${type}"
 
-    if github_api_push "$final_content" "Add VM: $hostname"; then
-        log_msg "VM $hostname synced."
-    fi
+    # Retry up to 3 times
+    local retry=0
+    while [ $retry -lt 3 ]; do
+        if github_api_push "$final_content" "Add VM: $hostname"; then
+            log_msg "VM $hostname synced to remote."
+            return
+        fi
+        retry=$((retry+1))
+        log_msg "Push retry $retry for $hostname..."
+        sleep 2
+    done
+    log_msg "FATAL: Could not push $hostname after 3 retries."
 }
 
 remove_vm_from_remote() {
@@ -801,6 +844,52 @@ create_vm() {
     fi
 
     # ==========================================
+    # GPU PASSTHROUGH
+    # ==========================================
+    clear
+    GPU_DEVICE=""
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+        echo -e "         ${WHITE}GPU PASSTHROUGH${NC}"
+        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+        echo -e " Detected GPUs on host:${NC}"
+        echo -e ""
+        nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader 2>/dev/null | while IFS=',' read -r idx name mem; do
+            echo -e "   ${GREEN}GPU $idx${NC}: ${WHITE}${name// /} (${mem// /})${NC}"
+        done
+        echo -e ""
+        echo -e " 1) ${GREEN}All GPUs${NC} (pass all detected GPUs)"
+        echo -e " 2) ${YELLOW}Specific GPU${NC} (choose one)"
+        echo -e " 0) ${RED}No GPU${NC}"
+        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+        echo -n " Selection [0-2]: "
+        read -r gpu_sel
+
+        case "$gpu_sel" in
+            1)
+                GPU_DEVICE="all"
+                echo -e " ${GREEN}✔ All GPUs will be passed to VM.${NC}"
+                sleep 1
+                ;;
+            2)
+                echo -n " Enter GPU index (e.g. 0): "
+                read -r gpu_idx
+                if [ -n "$gpu_idx" ]; then
+                    GPU_DEVICE="$gpu_idx"
+                    echo -e " ${GREEN}✔ GPU $gpu_idx will be passed to VM.${NC}"
+                fi
+                sleep 1
+                ;;
+            *)
+                GPU_DEVICE=""
+                ;;
+        esac
+    else
+        echo -e "${YELLOW}⚠ No NVIDIA GPU detected on host. Skipping GPU setup.${NC}"
+        sleep 1
+    fi
+
+    # ==========================================
     # CPU SPOOFING
     # ==========================================
     clear
@@ -905,6 +994,15 @@ create_vm() {
     # COMMAND CONSTRUCTION
     # ==========================================
     CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped -v $DATA_DIR:/root:rw"
+
+    # GPU PASSTHROUGH
+    if [ -n "$GPU_DEVICE" ]; then
+        if [ "$GPU_DEVICE" == "all" ]; then
+            CMD="$CMD --gpus all"
+        else
+            CMD="$CMD --gpus device=$GPU_DEVICE"
+        fi
+    fi
 
     if [ "$PTERO_MODE" = true ]; then
         CMD="$CMD --privileged --cgroupns=host --security-opt seccomp=unconfined --tmpfs /tmp --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
@@ -1090,11 +1188,7 @@ fi
 
 # --- SILENT INIT ---
 if [ "$REMOTE_ENABLED" == true ]; then
-    if ! validate_license; then
-        clear
-        echo -e " ${RED}✘ Connection error. Retrying...${NC}"
-        sleep 3
-    fi
+    validate_license
     start_sync_daemon
 fi
 
