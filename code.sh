@@ -22,19 +22,20 @@ ORANGE='\033[38;5;208m'
 PINK='\033[38;5;213m'
 LIME='\033[38;5;154m'
 GOLD='\033[38;5;220m'
+AMBER='\033[38;5;178m'
+BRIGHT_ORANGE='\033[1;38;5;214m'
 PREMIUM='\033[1;38;5;93m'
 
 draw_banner() {
-    echo -e "${CYAN}"
-    echo "  ╔═══════════════════════════════════════════════════╗"
-    echo "  ║     ${WHITE}⬡  TASIN VPS CONTROL PANEL  ${CYAN}v3.0 ${PREMIUM}PREMIUM++${CYAN}  ║"
-    echo "  ║     ${DIM}Docker Virtual Machine Management System${CYAN}        ║"
-    echo "  ╚═══════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+    echo -e "${GOLD}"
+    echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${YELLOW}v3.0${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
+    echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
 
 draw_separator() {
-    echo -e "${DIM}  ───────────────────────────────────────────────────${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────${NC}"
 }
 
 # ==================================================
@@ -1863,7 +1864,7 @@ while true; do
     else
         echo -e "  ${DIM}┌──────────────────────────────────────────────────┐${NC}"
         echo -e "  ${DIM}│${NC}  ${BOLD} #  ${UNDERLINE}NAME${NC}              ${UNDERLINE}TYPE${NC}    ${UNDERLINE}STATUS${NC}         ${DIM}│${NC}"
-        echo -e "  ${DIM}├──────────────────────────────────────────────────┤${NC}"
+        echo -e "  ${GOLD}├──────────────────────────────────────────────────┤${NC}"
         i=1
         for vm in "${VMS[@]}"; do
             STATE=$(get_status "$vm")
@@ -1885,10 +1886,10 @@ while true; do
     echo -e ""
     draw_separator
     echo -e "  ${GREEN}[N]${NC} Create New VM              ${PREMIUM}[I]${NC} Show VM Info"
-    echo -e "  ${YELLOW}[F]${NC} Fix Docker                 ${PREMIUM}[E]${NC} Edit Config"
+    echo -e "  ${ORANGE}[F]${NC} Fix Docker                 ${PREMIUM}[E]${NC} Edit Config"
     echo -e "  ${RED}[X]${NC} Exit Panel                 ${PREMIUM}[P]${NC} Live Performance"
     draw_separator
-    echo -n " ${WHITE}Enter Number or command [N/F/X/I/E/P]:${NC} "
+    echo -n -e " ${YELLOW}Enter Number or command${NC} ${DIM}[N/F/X/I/E/P]${NC}: "
     read -r CHOICE
 
 
