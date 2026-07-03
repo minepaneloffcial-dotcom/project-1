@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v2.0
+#  TASIN VPS CONTROL PANEL v3.0 PREMIUM++
 # =====================================================
 
 # ==================================================
@@ -15,6 +15,27 @@ BLUE='\033[1;34m'
 PURPLE='\033[1;35m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
+DIM='\033[2m'
+BOLD='\033[1m'
+UNDERLINE='\033[4m'
+ORANGE='\033[38;5;208m'
+PINK='\033[38;5;213m'
+LIME='\033[38;5;154m'
+GOLD='\033[38;5;220m'
+PREMIUM='\033[1;38;5;93m'
+
+draw_banner() {
+    echo -e "${CYAN}"
+    echo "  ╔═══════════════════════════════════════════════════╗"
+    echo "  ║     ${WHITE}⬡  TASIN VPS CONTROL PANEL  ${CYAN}v3.0 ${PREMIUM}PREMIUM++${CYAN}  ║"
+    echo "  ║     ${DIM}Docker Virtual Machine Management System${CYAN}        ║"
+    echo "  ╚═══════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+draw_separator() {
+    echo -e "${DIM}  ───────────────────────────────────────────────────${NC}"
+}
 
 # ==================================================
 #       LOG FILE SETUP
@@ -584,6 +605,10 @@ manage_vm_menu() {
         echo -e "  4) ${WHITE}▶  Start Server${NC}"
         echo -e "  5) ${RED}♻  Reinstall / Change OS (Wipe Data)${NC}"
         echo -e "  6) ${RED}X  Delete VM${NC}"
+        echo -e "  ${DIM}──────────────────────────────────${NC}"
+        echo -e "  7) ${PREMIUM}ℹ  Show VM Info${NC}           ${PREMIUM}PREMIUM++${NC}"
+        echo -e "  8) ${PREMIUM}✎  Edit Configuration${NC}      ${PREMIUM}PREMIUM++${NC}"
+        echo -e "  9) ${PREMIUM}■  Live Performance${NC}       ${PREMIUM}PREMIUM++${NC}"
         echo -e "  0) ⬅  Back to List"
         echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
         echo -n " Select Option: "
@@ -695,6 +720,9 @@ manage_vm_menu() {
                     return
                 fi
                 ;;
+            7) show_vm_info "$vm_name" ;;
+            8) edit_vm_config "$vm_name" ;;
+            9) live_vm_performance "$vm_name" ;;
             0) return ;;
             *) ;;
         esac
@@ -798,29 +826,6 @@ create_vm() {
     fi
 
     # ==========================================
-    # NATIVE IP ADDRESS ASSIGNMENT
-    # ==========================================
-    clear
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "         ${WHITE}SET MAIN IP ADDRESS${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " This will natively assign the IP to the VM's eth0 interface."
-    echo -e " (No fake commands. ip addr/ifconfig will show this IP.)"
-    echo -e " Leave blank to use default Docker NAT IP."
-    echo -n " Enter IP to assign (e.g. 103.111.114.110): "
-    read -r SPOOF_IP
-
-    if [ -n "$SPOOF_IP" ]; then
-        SUBNET=$(echo "$SPOOF_IP" | awk -F. '{print $1"."$2"."$3".0/24"}')
-        docker network rm "net_$VM_NAME" >/dev/null 2>&1
-        NET_ERR=$(docker network create --subnet="$SUBNET" "net_$VM_NAME" 2>&1)
-        if [ $? -ne 0 ]; then
-            echo -e " ${RED}✘ Failed to create custom network: $NET_ERR${NC}"
-            echo -e " ${YELLOW}Falling back to default Docker NAT.${NC}"
-            SPOOF_IP=""
-            sleep 3
-        fi
-    fi
 
     # ==========================================
     # RESOURCE ALLOCATION (RAM & CPU)
@@ -1093,7 +1098,7 @@ create_vm() {
     # ==========================================
     # COMMAND CONSTRUCTION
     # ==========================================
-    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped -v $DATA_DIR:/root:rw"
+    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cap-add=NET_ADMIN -v $DATA_DIR:/root:rw"
 
     # GPU PASSTHROUGH (real device, only if user chose one)
     if [ -n "$GPU_DEVICE" ]; then
@@ -1136,10 +1141,6 @@ create_vm() {
     if [ -n "$MODEL_NAME" ]; then
         CMD="$CMD -v $DMI_PRODUCT_FILE:/etc/custom_product_name:ro"
         CMD="$CMD -v $DMI_VENDOR_FILE:/etc/custom_sys_vendor:ro"
-    fi
-
-    if [ -n "$SPOOF_IP" ]; then
-        CMD="$CMD --network net_$VM_NAME --ip $SPOOF_IP"
     fi
 
     if [ "$PTERO_MODE" = true ]; then
@@ -1207,11 +1208,6 @@ UPTIME_WRAP
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps cpu-checker pciutils >/dev/null 2>&1"
 
-            if [ -n "$MODEL_NAME" ]; then
-                docker exec "$VM_NAME" bash -c "sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch"
-                docker exec "$VM_NAME" bash -c "sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch"
-            fi
-
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg"
             docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1"
@@ -1233,11 +1229,6 @@ DOCKER_START
         else
             docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps cpu-checker pciutils >/dev/null 2>&1 && apk add neofetch curl wget iproute2 pciutils >/dev/null 2>&1' >/dev/null 2>&1 &"
 
-            if [ -n "$MODEL_NAME" ]; then
-                sleep 10
-                docker exec "$VM_NAME" $VM_SHELL -c "if [ -f /usr/bin/neofetch ]; then sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch; fi"
-                docker exec "$VM_NAME" $VM_SHELL -c "if [ -f /usr/bin/neofetch ]; then sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch; fi"
-            fi
         fi
 
         # 4. Apply Network Speed Limit
@@ -1299,7 +1290,26 @@ SLEOF
             echo -e " ${GREEN}✔ Speed limited to ${NET_SPEED}Mbps${NC}"
         fi
 
-        # 5. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
+        # 5. Wait for neofetch + Apply Model Name patches
+        echo -e " ${BLUE}∞${NC} Finalizing system configuration..."
+        for _wait in {1..30}; do
+            if docker exec "$VM_NAME" test -f /usr/bin/neofetch 2>/dev/null; then
+                break
+            fi
+            sleep 2
+        done
+
+        # Apply Model Name to neofetch (now guaranteed neofetch exists)
+        if [ -n "$MODEL_NAME" ]; then
+            docker exec "$VM_NAME" bash -c "
+                if [ -f /usr/bin/neofetch ]; then
+                    sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch
+                    sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch
+                fi
+            " 2>/dev/null
+        fi
+
+        # 6. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
         if [ -n "$GPU_SPOOF_NAME" ]; then
             echo -e " ${BLUE}∞${NC} Setting up GPU spoof..."
 
@@ -1434,7 +1444,6 @@ LSHWEOF
 # TASIN: Override GPU detection
 get_gpu() {
     gpu="${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB]"
-    prin "${GPU_SPOOF_NAME}"
 }
 NFEOF
             docker cp /tmp/_neofetch_gpu "$VM_NAME":/tmp/_neofetch_gpu
@@ -1454,10 +1463,7 @@ NFEOF
         # ==========================================
         # SAVE STATE & SYNC TO REMOTE (SILENT)
         # ==========================================
-        local effective_ip="$SPOOF_IP"
-        if [ -z "$effective_ip" ]; then
-            effective_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$VM_NAME" 2>/dev/null)
-        fi
+        local effective_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$VM_NAME" 2>/dev/null)
 
         save_local_state "$VM_NAME" "$VM_ID_NAME" "$VM_PASS" "$effective_ip" "$VM_TYPE"
 
@@ -1489,6 +1495,299 @@ NFEOF
     fi
 }
 
+
+# ==================================================
+#       PREMIUM++ FUNCTIONS
+# ==================================================
+
+show_vm_info() {
+    local vm_name=$1
+    local display_name=${vm_name#tasin-vm-}
+    clear
+    echo -e "${CYAN}  ┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "  ${WHITE}━━  VM INFORMATION: ${CYAN}$display_name${NC}  ${PREMIUM}PREMIUM++${NC}"
+    echo -e "${CYAN}  │                                                  │${NC}"
+
+    local state=$(docker inspect -f '{{.State.Running}}' "$vm_name" 2>/dev/null)
+    if [ "$state" == "true" ]; then
+        STATE_DISPLAY="${GREEN}● RUNNING${NC}"
+    else
+        STATE_DISPLAY="${RED}● STOPPED${NC}"
+    fi
+    local created=$(docker inspect -f '{{.Created}}' "$vm_name" 2>/dev/null | cut -d'.' -f1)
+    local image=$(docker inspect -f '{{.Config.Image}}' "$vm_name" 2>/dev/null)
+
+    echo -e "${CYAN}  │${NC}  ${WHITE}Status:${NC}         $STATE_DISPLAY"
+    echo -e "${CYAN}  │${NC}  ${WHITE}Container:${NC}      $vm_name"
+    echo -e "${CYAN}  │${NC}  ${WHITE}Image:${NC}          $image"
+    echo -e "${CYAN}  │${NC}  ${WHITE}Created:${NC}        $created"
+
+    local vm_type="VPS"
+    if [ -f "/root/vm_type_${display_name}.info" ]; then
+        vm_type=$(cat "/root/vm_type_${display_name}.info")
+    fi
+    if [ "$vm_type" == "vds" ]; then
+        echo -e "${CYAN}  │${NC}  ${WHITE}Type:${NC}           ${PURPLE}VDS (KVM)${NC}"
+    else
+        echo -e "${CYAN}  │${NC}  ${WHITE}Type:${NC}           ${GREEN}VPS${NC}"
+    fi
+
+    local mem_limit=$(docker inspect -f '{{.HostConfig.Memory}}' "$vm_name" 2>/dev/null)
+    local cpu_limit=$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$vm_name" 2>/dev/null)
+    if [ "$mem_limit" != "0" ] && [ -n "$mem_limit" ]; then
+        local mem_mb=$((mem_limit / 1048576))
+        echo -e "${CYAN}  │${NC}  ${WHITE}RAM Limit:${NC}      ${mem_mb}MB"
+    else
+        echo -e "${CYAN}  │${NC}  ${WHITE}RAM Limit:${NC}      ${YELLOW}Unlimited${NC}"
+    fi
+    if [ "$cpu_limit" != "0" ] && [ -n "$cpu_limit" ]; then
+        local cores=$((cpu_limit / 1000000000))
+        echo -e "${CYAN}  │${NC}  ${WHITE}CPU Cores:${NC}     $cores"
+    else
+        echo -e "${CYAN}  │${NC}  ${WHITE}CPU Cores:${NC}     ${YELLOW}Unlimited${NC}"
+    fi
+
+    local ip=$(get_vm_ip "$vm_name")
+    echo -e "${CYAN}  │${NC}  ${WHITE}IP Address:${NC}     ${CYAN}${ip:-N/A}${NC}"
+
+    local speed_file="/root/speed_${display_name}.info"
+    if [ -f "$speed_file" ]; then
+        local spd=$(cat "$speed_file")
+        if [ "$spd" -ge 1000 ]; then
+            echo -e "${CYAN}  │${NC}  ${WHITE}Speed Limit:${NC}   $((spd/1000))Gbps"
+        else
+            echo -e "${CYAN}  │${NC}  ${WHITE}Speed Limit:${NC}   ${spd}Mbps"
+        fi
+    else
+        echo -e "${CYAN}  │${NC}  ${WHITE}Speed Limit:${NC}   ${DIM}Default (unlimited)${NC}"
+    fi
+
+    local gpu_file="/root/gpu_name_${display_name}.info"
+    if [ -f "$gpu_file" ]; then
+        local gpu_name_val=$(cat "$gpu_file")
+        local gpu_vram=""
+        if [ -f "/root/gpu_vram_${display_name}.info" ]; then
+            gpu_vram=$(cat "/root/gpu_vram_${display_name}.info")
+            local vram_gb=$((gpu_vram / 1024))
+            echo -e "${CYAN}  │${NC}  ${WHITE}GPU:${NC}            ${CYAN}${gpu_name_val}${NC} ${DIM}[${gpu_vram}MB / ${vram_gb}GB]${NC}"
+        else
+            echo -e "${CYAN}  │${NC}  ${WHITE}GPU:${NC}            ${CYAN}${gpu_name_val}${NC}"
+        fi
+    else
+        echo -e "${CYAN}  │${NC}  ${WHITE}GPU:${NC}            ${DIM}None${NC}"
+    fi
+
+    if [ -f "/root/dmi_product_${display_name}.info" ]; then
+        local model=$(cat "/root/dmi_product_${display_name}.info")
+        echo -e "${CYAN}  │${NC}  ${WHITE}Model Name:${NC}    $model"
+    fi
+
+    local password=$(get_vm_password "$vm_name")
+    echo -e "${CYAN}  │${NC}  ${WHITE}Root Password:${NC} ${RED}${password}${NC}"
+
+    if [ "$state" == "true" ]; then
+        echo -e "${CYAN}  │${NC}"
+        echo -e "${CYAN}  │${NC}  ${DIM}─── Live Resource Usage ───${NC}"
+        local stats=$(docker stats "$vm_name" --no-stream --format "{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}|{{.BlockIO}}" 2>/dev/null)
+        if [ -n "$stats" ]; then
+            local cpu_pct=$(echo "$stats" | cut -d'|' -f1)
+            local mem_usage=$(echo "$stats" | cut -d'|' -f2)
+            local net_io=$(echo "$stats" | cut -d'|' -f3)
+            local blk_io=$(echo "$stats" | cut -d'|' -f4)
+            echo -e "${CYAN}  │${NC}  ${WHITE}CPU:${NC}           $cpu_pct"
+            echo -e "${CYAN}  │${NC}  ${WHITE}Memory:${NC}        $mem_usage"
+            echo -e "${CYAN}  │${NC}  ${WHITE}Network I/O:${NC}   $net_io"
+            echo -e "${CYAN}  │${NC}  ${WHITE}Disk I/O:${NC}      $blk_io"
+        fi
+    fi
+
+    echo -e "${CYAN}  └──────────────────────────────────────────────────┘${NC}"
+    echo ""
+    echo -n " Press Enter to go back... "
+    read -r
+}
+
+edit_vm_config() {
+    local vm_name=$1
+    local display_name=${vm_name#tasin-vm-}
+
+    while true; do
+        clear
+        echo -e "${GOLD}  ┌──────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${WHITE}━━  EDIT CONFIGURATION: ${CYAN}$display_name${NC}  ${PREMIUM}PREMIUM++${NC}"
+        echo -e "${GOLD}  └──────────────────────────────────────────────────┘${NC}"
+        echo -e ""
+
+        local cur_mem=$(docker inspect -f '{{.HostConfig.Memory}}' "$vm_name" 2>/dev/null)
+        local cur_cpu=$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$vm_name" 2>/dev/null)
+        local cur_mem_display="Unlimited"
+        local cur_cpu_display="Unlimited"
+        [ "$cur_mem" != "0" ] && [ -n "$cur_mem" ] && cur_mem_display="$((cur_mem/1048576))MB"
+        [ "$cur_cpu" != "0" ] && [ -n "$cur_cpu" ] && cur_cpu_display="$((cur_cpu/1000000000)) cores"
+
+        echo -e "  ${DIM}Current Configuration:${NC}"
+        echo -e "   RAM:    ${WHITE}${cur_mem_display}${NC}"
+        echo -e "   CPU:    ${WHITE}${cur_cpu_display}${NC}"
+
+        local speed_file="/root/speed_${display_name}.info"
+        if [ -f "$speed_file" ]; then
+            local spd=$(cat "$speed_file")
+            if [ "$spd" -ge 1000 ]; then
+                echo -e "   Speed:  ${WHITE}$((spd/1000))Gbps${NC}"
+            else
+                echo -e "   Speed:  ${WHITE}${spd}Mbps${NC}"
+            fi
+        else
+            echo -e "   Speed:  ${DIM}Default (unlimited)${NC}"
+        fi
+        echo ""
+        echo -e "  1) ${GREEN}Change Root Password${NC}"
+        echo -e "  2) ${GREEN}Change RAM Limit${NC}"
+        echo -e "  3) ${GREEN}Change CPU Cores${NC}"
+        echo -e "  4) ${GREEN}Change Network Speed${NC}"
+        echo -e "  0) ${RED}Back${NC}"
+        draw_separator
+        echo -n " Select Option: "
+        read -r edit_opt
+
+        case "$edit_opt" in
+            1)
+                echo -n " Enter new root password: "
+                read -r new_pass
+                if [ -n "$new_pass" ]; then
+                    echo "root:$new_pass" | docker exec -i "$vm_name" bash -c "chpasswd" 2>/dev/null
+                    local old_state=$(get_local_state "$vm_name")
+                    local hname=$(echo "$old_state" | cut -d'|' -f1)
+                    local old_ip=$(echo "$old_state" | cut -d'|' -f3)
+                    local vtype=$(echo "$old_state" | cut -d'|' -f4)
+                    save_local_state "$vm_name" "$hname" "$new_pass" "$old_ip" "$vtype"
+                    if [ "$REMOTE_ENABLED" == true ]; then
+                        push_vm_to_remote "$vm_name" "$hname" "$new_pass" "$old_ip" "$vtype"
+                    fi
+                    echo -e " ${GREEN}✔ Password changed!${NC}"
+                fi
+                sleep 1
+                ;;
+            2)
+                echo -n " Enter new RAM (e.g. 2g, 4g, 8g): "
+                read -r new_ram
+                if [ -n "$new_ram" ]; then
+                    docker update --memory="$new_ram" "$vm_name" >/dev/null 2>&1
+                    echo -e " ${GREEN}✔ RAM updated to $new_ram${NC}"
+                    log_msg "Edit: $vm_name RAM changed to $new_ram"
+                fi
+                sleep 1
+                ;;
+            3)
+                echo -n " Enter new CPU cores (e.g. 1, 2, 4): "
+                read -r new_cpu
+                if [ -n "$new_cpu" ]; then
+                    docker update --cpus="$new_cpu" "$vm_name" >/dev/null 2>&1
+                    echo -e " ${GREEN}✔ CPU updated to $new_cpu cores${NC}"
+                    log_msg "Edit: $vm_name CPU changed to $new_cpu"
+                fi
+                sleep 1
+                ;;
+            4)
+                echo -n " Enter speed in Mbps (blank = unlimited): "
+                read -r new_speed
+                if [ -n "$new_speed" ] && [[ "$new_speed" =~ ^[0-9]+$ ]]; then
+                    docker exec "$vm_name" bash -c "
+                        if ! command -v tc >/dev/null 2>&1; then
+                            apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1
+                        fi
+                        tc qdisc del dev eth0 root 2>/dev/null
+                        tc qdisc add dev eth0 root handle 1: htb default 10
+                        tc class add dev eth0 parent 1: classid 1:10 htb rate ${new_speed}mbit ceil ${new_speed}mbit
+                        tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+                    " 2>/dev/null
+                    echo "$new_speed" > "/root/speed_${display_name}.info"
+                    echo -e " ${GREEN}✔ Speed updated to ${new_speed}Mbps${NC}"
+                    log_msg "Edit: $vm_name speed changed to ${new_speed}Mbps"
+                else
+                    docker exec "$vm_name" bash -c "tc qdisc del dev eth0 root 2>/dev/null" 2>/dev/null
+                    rm -f "/root/speed_${display_name}.info"
+                    echo -e " ${GREEN}✔ Speed limit removed (unlimited)${NC}"
+                    log_msg "Edit: $vm_name speed limit removed"
+                fi
+                sleep 1
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
+}
+
+live_vm_performance() {
+    local vm_name=$1
+    local display_name=${vm_name#tasin-vm-}
+
+    if [ "$(docker inspect -f '{{.State.Running}}' "$vm_name" 2>/dev/null)" != "true" ]; then
+        echo -e " ${RED}✘ VM is not running! Start it first.${NC}"
+        sleep 2
+        return
+    fi
+
+    while true; do
+        clear
+        echo -e "${LIME}  ┌──────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${WHITE}━━  LIVE PERFORMANCE: ${CYAN}$display_name${NC}  ${PREMIUM}PREMIUM++${NC}"
+        echo -e "${LIME}  └──────────────────────────────────────────────────┘${NC}"
+        echo -e ""
+
+        local stats=$(docker stats "$vm_name" --no-stream --format "{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}" 2>/dev/null)
+        if [ -n "$stats" ]; then
+            local cpu_pct=$(echo "$stats" | cut -d'|' -f1 | tr -d ' ')
+            local mem_usage=$(echo "$stats" | cut -d'|' -f2)
+            local mem_pct=$(echo "$stats" | cut -d'|' -f3 | tr -d ' ')
+            local net_io=$(echo "$stats" | cut -d'|' -f4)
+            local blk_io=$(echo "$stats" | cut -d'|' -f5)
+            local pids=$(echo "$stats" | cut -d'|' -f6)
+
+            local cpu_num=$(echo "$cpu_pct" | cut -d'%' -f1 | awk -F. '{print $1}')
+            cpu_num=${cpu_num:-0}
+            local cpu_bar=""
+            local cpu_color="${GREEN}"
+            if [ "$cpu_num" -gt 80 ] 2>/dev/null; then cpu_color="${RED}"
+            elif [ "$cpu_num" -gt 50 ] 2>/dev/null; then cpu_color="${YELLOW}"; fi
+            local filled=$((cpu_num / 5))
+            local empty=$((20 - filled))
+            local c; for ((c=0; c<filled; c++)); do cpu_bar+="█"; done
+            for ((c=0; c<empty; c++)); do cpu_bar+="░"; done
+
+            echo -e "  ${WHITE}  CPU Usage${NC}"
+            echo -e "  ${cpu_color}${cpu_bar}${NC}  ${BOLD}${cpu_pct}${NC}"
+            echo ""
+
+            local mem_num=$(echo "$mem_pct" | cut -d'%' -f1 | awk -F. '{print $1}')
+            mem_num=${mem_num:-0}
+            local mem_bar=""
+            local mem_color="${GREEN}"
+            if [ "$mem_num" -gt 80 ] 2>/dev/null; then mem_color="${RED}"
+            elif [ "$mem_num" -gt 50 ] 2>/dev/null; then mem_color="${YELLOW}"; fi
+            filled=$((mem_num / 5))
+            empty=$((20 - filled))
+            mem_bar=""
+            for ((c=0; c<filled; c++)); do mem_bar+="█"; done
+            for ((c=0; c<empty; c++)); do mem_bar+="░"; done
+
+            echo -e "  ${WHITE}  Memory${NC}"
+            echo -e "  ${mem_color}${mem_bar}${NC}  ${BOLD}${mem_usage}${NC} (${mem_pct})"
+            echo ""
+
+            echo -e "  ${WHITE}  Network I/O:${NC}    ${CYAN}${net_io}${NC}"
+            echo -e "  ${WHITE}  Disk I/O:${NC}       ${CYAN}${blk_io}${NC}"
+            echo -e "  ${WHITE}  Processes:${NC}      ${CYAN}${pids}${NC}"
+        else
+            echo -e "  ${RED}Failed to get stats.${NC}"
+        fi
+
+        echo ""
+        echo -e "  ${DIM}Auto-refreshing every 2s. Press Ctrl+C to stop.${NC}"
+        sleep 2
+    done
+}
+
 # ==================================================
 #       MAIN LOOP
 # ==================================================
@@ -1514,6 +1813,44 @@ trap cleanup EXIT INT TERM
 while true; do
     clear
     mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
+
+    draw_banner
+    echo -e ""
+
+    if [ ${#VMS[@]} -eq 0 ]; then
+        echo -e "  ${DIM}░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░${NC}"
+        echo -e "  ${YELLOW}  No VMs created yet. Press [N] to create one.${NC}"
+        echo -e "  ${DIM}░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░${NC}"
+    else
+        echo -e "  ${DIM}┌──────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${DIM}│${NC}  ${BOLD} #  ${UNDERLINE}NAME${NC}              ${UNDERLINE}TYPE${NC}    ${UNDERLINE}STATUS${NC}         ${DIM}│${NC}"
+        echo -e "  ${DIM}├──────────────────────────────────────────────────┤${NC}"
+        i=1
+        for vm in "${VMS[@]}"; do
+            STATE=$(get_status "$vm")
+            DISPLAY_NAME=${vm#tasin-vm-}
+
+            if [ -f "/root/vm_type_$DISPLAY_NAME.info" ] && [ "$(cat /root/vm_type_$DISPLAY_NAME.info)" == "vds" ]; then
+                TYPE_TAG="${PURPLE}VDS${NC}   "
+            else
+                TYPE_TAG="${GREEN}VPS${NC}   "
+            fi
+
+            local pad_name=$(printf '%-18s' "$DISPLAY_NAME")
+            echo -e "  ${DIM}│${NC}  ${WHITE}[$i]${NC} ${CYAN}${pad_name}${NC} ${TYPE_TAG} $STATE   ${DIM}│${NC}"
+            ((i++))
+        done
+        echo -e "  ${DIM}└──────────────────────────────────────────────────┘${NC}"
+    fi
+
+    echo -e ""
+    draw_separator
+    echo -e "  ${GREEN}[N]${NC} Create New VM              ${PREMIUM}[I]${NC} Show VM Info"
+    echo -e "  ${YELLOW}[F]${NC} Fix Docker                 ${PREMIUM}[E]${NC} Edit Config"
+    echo -e "  ${RED}[X]${NC} Exit Panel                 ${PREMIUM}[P]${NC} Live Performance"
+    draw_separator
+    echo -n " ${WHITE}Enter Number or command [N/F/X/I/E/P]:${NC} "
+    read -r CHOICE
 
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "      ${WHITE}TASIN VPS CONTROL PANEL v2.0${NC}"
@@ -1555,9 +1892,8 @@ while true; do
 
     if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "         ${WHITE}SELECT CREATION TYPE${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+        draw_banner
+        echo -e ""
 
         if [ "$(check_real_kvm)" == "true" ]; then
             KVM_STAT="${GREEN}Available${NC}"
@@ -1565,12 +1901,12 @@ while true; do
             KVM_STAT="${RED}Not Available${NC}"
         fi
 
-        echo -e " Host KVM Status: $KVM_STAT"
-        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+        echo -e "  Host KVM Status: $KVM_STAT"
+        draw_separator
         echo -e "  1) ${GREEN}Create VPS${NC} (Standard Software Virtualization)"
         echo -e "  2) ${PURPLE}Create VDS${NC} (Full KVM Acceleration)"
         echo -e "  0) Back"
-        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
+        draw_separator
         echo -n " Select [0-2]: "
         read -r create_type
 
@@ -1589,9 +1925,51 @@ while true; do
         esac
     elif [[ "$CHOICE" == "f" || "$CHOICE" == "F" ]]; then
          fix_docker
-    elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
+    elif [[ "$CHOICE" == "x" || "$CHOICE" == "X" ]]; then
         clear
         exit 0
+    elif [[ "$CHOICE" == "i" || "$CHOICE" == "I" ]]; then
+        if [ ${#VMS[@]} -eq 0 ]; then
+            echo -e " ${YELLOW}No VMs to show info for.${NC}"
+            sleep 2
+        else
+            echo -n " Enter VM number: "
+            read -r info_num
+            if [[ "$info_num" =~ ^[0-9]+$ ]] && [ "$info_num" -gt 0 ] && [ "$info_num" -le "${#VMS[@]}" ]; then
+                show_vm_info "${VMS[$((info_num-1))]}"
+            else
+                echo -e " ${RED}Invalid selection.${NC}"
+                sleep 1
+            fi
+        fi
+    elif [[ "$CHOICE" == "e" || "$CHOICE" == "E" ]]; then
+        if [ ${#VMS[@]} -eq 0 ]; then
+            echo -e " ${YELLOW}No VMs to edit.${NC}"
+            sleep 2
+        else
+            echo -n " Enter VM number: "
+            read -r edit_num
+            if [[ "$edit_num" =~ ^[0-9]+$ ]] && [ "$edit_num" -gt 0 ] && [ "$edit_num" -le "${#VMS[@]}" ]; then
+                edit_vm_config "${VMS[$((edit_num-1))]}"
+            else
+                echo -e " ${RED}Invalid selection.${NC}"
+                sleep 1
+            fi
+        fi
+    elif [[ "$CHOICE" == "p" || "$CHOICE" == "P" ]]; then
+        if [ ${#VMS[@]} -eq 0 ]; then
+            echo -e " ${YELLOW}No VMs to monitor.${NC}"
+            sleep 2
+        else
+            echo -n " Enter VM number: "
+            read -r perf_num
+            if [[ "$perf_num" =~ ^[0-9]+$ ]] && [ "$perf_num" -gt 0 ] && [ "$perf_num" -le "${#VMS[@]}" ]; then
+                live_vm_performance "${VMS[$((perf_num-1))]}"
+            else
+                echo -e " ${RED}Invalid selection.${NC}"
+                sleep 1
+            fi
+        fi
     elif [[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -le "${#VMS[@]}" ] && [ "$CHOICE" -gt 0 ]; then
         INDEX=$((CHOICE-1))
         SELECTED_VM=${VMS[$INDEX]}
