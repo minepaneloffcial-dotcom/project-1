@@ -605,6 +605,21 @@ manage_vm_menu() {
                 ;;
             2)
                 docker restart $vm_name
+                # Re-apply speed limit if configured
+                SPEED_FILE="/root/speed_${vm_name#tasin-vm-}.info"
+                if [ -f "$SPEED_FILE" ]; then
+                    SAVED_SPEED=$(cat "$SPEED_FILE")
+                    docker exec "$vm_name" bash -c "
+                        if ! command -v tc >/dev/null 2>&1; then
+                            apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1
+                        fi
+                        sleep 2
+                        tc qdisc del dev eth0 root 2>/dev/null
+                        tc qdisc add dev eth0 root handle 1: htb default 10
+                        tc class add dev eth0 parent 1: classid 1:10 htb rate ${SAVED_SPEED}mbit ceil ${SAVED_SPEED}mbit
+                        tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+                    " 2>/dev/null
+                fi
                 echo -e " ${GREEN}✔ Rebooted.${NC}"
                 sleep 1
                 ;;
@@ -615,6 +630,21 @@ manage_vm_menu() {
                 ;;
             4)
                 docker start $vm_name
+                # Re-apply speed limit if configured
+                SPEED_FILE="/root/speed_${vm_name#tasin-vm-}.info"
+                if [ -f "$SPEED_FILE" ]; then
+                    SAVED_SPEED=$(cat "$SPEED_FILE")
+                    docker exec "$vm_name" bash -c "
+                        if ! command -v tc >/dev/null 2>&1; then
+                            apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1
+                        fi
+                        sleep 2
+                        tc qdisc del dev eth0 root 2>/dev/null
+                        tc qdisc add dev eth0 root handle 1: htb default 10
+                        tc class add dev eth0 parent 1: classid 1:10 htb rate ${SAVED_SPEED}mbit ceil ${SAVED_SPEED}mbit
+                        tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+                    " 2>/dev/null
+                fi
                 echo -e " ${GREEN}✔ Started.${NC}"
                 sleep 1
                 ;;
@@ -653,6 +683,9 @@ manage_vm_menu() {
                     rm -f "/root/dmi_product_${delete_hostname}.info"
                     rm -f "/root/dmi_vendor_${delete_hostname}.info"
                     rm -f "/root/vm_type_${delete_hostname}.info"
+                    rm -f "/root/gpu_name_${delete_hostname}.info"
+                    rm -f "/root/gpu_vram_${delete_hostname}.info"
+                    rm -f "/root/speed_${delete_hostname}.info"
                     remove_local_state "$vm_name"
                     remove_vm_from_remote "$delete_hostname"
 
@@ -882,22 +915,52 @@ create_vm() {
     read -r gpu_yes
 
     if [[ "$gpu_yes" == "y" || "$gpu_yes" == "Y" ]]; then
-        # Custom GPU Name
-        echo -n " Enter GPU Name (e.g. NVIDIA RTX 4090): "
-        read -r GPU_SPOOF_NAME
-        if [ -z "$GPU_SPOOF_NAME" ]; then
-            GPU_SPOOF_NAME="NVIDIA RTX 4090"
-        fi
+        echo -e ""
+        echo -e " ${GREEN}Select GPU Preset:${NC}"
+        echo -e "   1) ${CYAN}NVIDIA RTX 4090${NC}        + 24GB VRAM"
+        echo -e "   2) ${CYAN}NVIDIA RTX 4080 SUPER${NC}  + 16GB VRAM"
+        echo -e "   3) ${CYAN}NVIDIA RTX 4070 Ti SUPER${NC} + 16GB VRAM"
+        echo -e "   4) ${CYAN}NVIDIA RTX 3090${NC}        + 24GB VRAM"
+        echo -e "   5) ${CYAN}NVIDIA A100${NC}            + 80GB VRAM"
+        echo -e "   6) ${CYAN}NVIDIA RTX 6000 Ada${NC}    + 48GB VRAM"
+        echo -e "   7) ${CYAN}NVIDIA L40S${NC}            + 48GB VRAM"
+        echo -e "   8) ${YELLOW}Custom GPU (Enter Name + VRAM)${NC}"
+        echo -e ""
+        echo -n " Selection [1-8]: "
+        read -r gpu_sel
 
-        # Custom VRAM
-        echo -n " Enter VRAM in MB (e.g. 24576 for 24GB): "
-        read -r vram_input
-        if [ -n "$vram_input" ] && [[ "$vram_input" =~ ^[0-9]+$ ]]; then
-            GPU_SPOOF_VRAM="$vram_input"
-        else
-            GPU_SPOOF_VRAM="24576"
-        fi
-        echo -e " ${GREEN}✔ GPU: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB)${NC}"
+        case "$gpu_sel" in
+            1) GPU_SPOOF_NAME="NVIDIA RTX 4090"; GPU_SPOOF_VRAM="24576" ;;
+            2) GPU_SPOOF_NAME="NVIDIA RTX 4080 SUPER"; GPU_SPOOF_VRAM="16384" ;;
+            3) GPU_SPOOF_NAME="NVIDIA RTX 4070 Ti SUPER"; GPU_SPOOF_VRAM="16384" ;;
+            4) GPU_SPOOF_NAME="NVIDIA RTX 3090"; GPU_SPOOF_VRAM="24576" ;;
+            5) GPU_SPOOF_NAME="NVIDIA A100"; GPU_SPOOF_VRAM="81920" ;;
+            6) GPU_SPOOF_NAME="NVIDIA RTX 6000 Ada Generation"; GPU_SPOOF_VRAM="49152" ;;
+            7) GPU_SPOOF_NAME="NVIDIA L40S"; GPU_SPOOF_VRAM="49152" ;;
+            8)
+                echo -n " Enter GPU Name (e.g. NVIDIA RTX 4090): "
+                read -r GPU_SPOOF_NAME
+                if [ -z "$GPU_SPOOF_NAME" ]; then
+                    GPU_SPOOF_NAME="NVIDIA RTX 4090"
+                fi
+                echo -n " Enter VRAM in MB (e.g. 24576 for 24GB): "
+                read -r vram_input
+                if [ -n "$vram_input" ] && [[ "$vram_input" =~ ^[0-9]+$ ]]; then
+                    GPU_SPOOF_VRAM="$vram_input"
+                else
+                    GPU_SPOOF_VRAM="24576"
+                fi
+                ;;
+            *) GPU_SPOOF_NAME="NVIDIA RTX 4090"; GPU_SPOOF_VRAM="24576" ;;
+        esac
+
+        local gpu_vram_gb=$((GPU_SPOOF_VRAM / 1024))
+        if [ $gpu_vram_gb -eq 0 ]; then gpu_vram_gb=1; fi
+        echo -e " ${GREEN}✔ GPU: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB / ${gpu_vram_gb}GB VRAM)${NC}"
+
+        # Save GPU info for persistence
+        echo "$GPU_SPOOF_NAME" > "/root/gpu_name_${VM_ID_NAME}.info"
+        echo "$GPU_SPOOF_VRAM" > "/root/gpu_vram_${VM_ID_NAME}.info"
 
         # Physical GPU passthrough (only if host has real GPUs)
         if command -v nvidia-smi >/dev/null 2>&1; then
@@ -1142,7 +1205,7 @@ UPTIME_WRAP
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps cpu-checker >/dev/null 2>&1"
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps cpu-checker pciutils >/dev/null 2>&1"
 
             if [ -n "$MODEL_NAME" ]; then
                 docker exec "$VM_NAME" bash -c "sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch"
@@ -1168,7 +1231,7 @@ DOCKER_START
 
             echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
         else
-            docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps cpu-checker >/dev/null 2>&1 && apk add neofetch curl wget iproute2 >/dev/null 2>&1' >/dev/null 2>&1 &"
+            docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps cpu-checker pciutils >/dev/null 2>&1 && apk add neofetch curl wget iproute2 pciutils >/dev/null 2>&1' >/dev/null 2>&1 &"
 
             if [ -n "$MODEL_NAME" ]; then
                 sleep 10
@@ -1180,33 +1243,75 @@ DOCKER_START
         # 4. Apply Network Speed Limit
         if [ -n "$NET_SPEED" ]; then
             echo -e " ${BLUE}∞${NC} Applying network speed limit..."
+            # Ensure iproute2 (tc) is installed first
             docker exec "$VM_NAME" bash -c "
-                if command -v tc >/dev/null 2>&1; then
-                    tc qdisc add dev eth0 root handle 1: htb default 10 2>/dev/null
-                    tc class add dev eth0 parent 1: classid 1:10 htb rate ${NET_SPEED}mbit ceil ${NET_SPEED}mbit 2>/dev/null
-                    tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10 2>/dev/null
-                    echo 'OK'
-                else
-                    echo 'NO_TC'
+                if ! command -v tc >/dev/null 2>&1; then
+                    apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1
+                    apk add iproute2 >/dev/null 2>&1
                 fi
-            " >/dev/null 2>&1
+                tc qdisc del dev eth0 root 2>/dev/null
+                tc qdisc add dev eth0 root handle 1: htb default 10
+                tc class add dev eth0 parent 1: classid 1:10 htb rate ${NET_SPEED}mbit ceil ${NET_SPEED}mbit
+                tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+            " 2>/dev/null
+
+            # Create persistence script for container restarts
+            cat > /tmp/_speed_limit.sh << SPEEDLIMEOF
+#!/bin/bash
+sleep 2
+if command -v tc >/dev/null 2>&1; then
+    tc qdisc del dev eth0 root 2>/dev/null
+    tc qdisc add dev eth0 root handle 1: htb default 10
+    tc class add dev eth0 parent 1: classid 1:10 htb rate ${NET_SPEED}mbit ceil ${NET_SPEED}mbit
+    tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+fi
+SPEEDLIMEOF
+            docker cp /tmp/_speed_limit.sh "$VM_NAME":/usr/local/bin/apply_speed_limit.sh
+            docker exec "$VM_NAME" chmod +x /usr/local/bin/apply_speed_limit.sh
+            rm -f /tmp/_speed_limit.sh
+
+            # Add to profile.d (runs on every login / docker exec)
+            docker exec "$VM_NAME" bash -c "mkdir -p /etc/profile.d && echo '#!/bin/bash' > /etc/profile.d/speed_limit.sh && echo '/usr/local/bin/apply_speed_limit.sh >/dev/null 2>&1 &' >> /etc/profile.d/speed_limit.sh && chmod +x /etc/profile.d/speed_limit.sh"
+
+            # For systemd containers, create a one-shot service
+            if [ "$PTERO_MODE" = true ]; then
+                docker exec "$VM_NAME" bash -c "
+                    cat > /etc/systemd/system/speed-limit.service << SLEOF
+[Unit]
+Description=Apply Network Speed Limit
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/apply_speed_limit.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+SLEOF
+                    systemctl enable speed-limit.service >/dev/null 2>&1
+                "
+            fi
+
+            # Save speed config for re-apply on reboot from manage menu
+            echo "$NET_SPEED" > "/root/speed_${VM_ID_NAME}.info"
+
             echo -e " ${GREEN}✔ Speed limited to ${NET_SPEED}Mbps${NC}"
         fi
 
-        # 5. Apply GPU Spoofing (fake nvidia-smi)
+        # 5. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
         if [ -n "$GPU_SPOOF_NAME" ]; then
             echo -e " ${BLUE}∞${NC} Setting up GPU spoof..."
 
-            # Build a padded GPU name for nvidia-smi table formatting
+            # Compute display values
             local pad_name=$(printf '%-23s' "$GPU_SPOOF_NAME")
             local pad_vram=$(printf '%-17s' "${GPU_SPOOF_VRAM}MiB")
-            local short_vram=$((GPU_SPOOF_VRAM))
-            local vram_gb=$((short_vram / 1024))
-            if [ $vram_gb -eq 0 ]; then vram_gb=1; fi
+            local gpu_vram_gb=$((GPU_SPOOF_VRAM / 1024))
+            if [ $gpu_vram_gb -eq 0 ]; then gpu_vram_gb=1; fi
 
             docker exec "$VM_NAME" bash -c "mkdir -p /usr/local/bin /etc/nvidia"
 
-            # Fake nvidia-smi
+            # --- Fake nvidia-smi ---
             cat > /tmp/_fake_smi << SMIEOF
 #!/bin/bash
 if [ "\$1" == "-L" ] 2>/dev/null; then
@@ -1229,18 +1334,90 @@ SMIEOF
             docker exec "$VM_NAME" chmod +x /usr/bin/nvidia-smi
             rm -f /tmp/_fake_smi
 
-            # Fake libcuda.so stub
+            # --- Fake libcuda.so stub ---
             docker exec "$VM_NAME" bash -c "mkdir -p /usr/lib/x86_64-linux-gnu"
             docker exec "$VM_NAME" bash -c "echo '/* fake libcuda stub */' > /usr/lib/x86_64-linux-gnu/libcuda.so.1"
             docker exec "$VM_NAME" bash -c "ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so 2>/dev/null"
 
-            # Fake lspci GPU entry
-            docker exec "$VM_NAME" bash -c "if [ -f /usr/bin/lspci ]; then
-                mkdir -p /usr/share/misc
-                echo '3d:00.0 VGA compatible controller: NVIDIA Corporation ${GPU_SPOOF_NAME} (rev a1)' > /usr/share/misc/pci.ids.gpu
-            fi" 2>/dev/null
+            # --- Proper lspci wrapper (makes neofetch detect GPU) ---
+            # Ensure pciutils is installed
+            docker exec "$VM_NAME" bash -c "
+                if ! command -v lspci >/dev/null 2>&1; then
+                    apt-get update -qq && apt-get install -y -qq pciutils >/dev/null 2>&1
+                    apk add pciutils >/dev/null 2>&1
+                fi
+            " 2>/dev/null
 
-            # Fake /proc/driver/nvidia/gpus
+            # Backup real lspci
+            docker exec "$VM_NAME" bash -c "
+                if [ -f /usr/bin/lspci ] && [ ! -f /usr/bin/lspci.real ]; then
+                    cp /usr/bin/lspci /usr/bin/lspci.real
+                elif [ -f /usr/sbin/lspci ] && [ ! -f /usr/sbin/lspci.real ]; then
+                    cp /usr/sbin/lspci /usr/sbin/lspci.real
+                    ln -sf /usr/sbin/lspci.real /usr/bin/lspci.real 2>/dev/null
+                fi
+                # If no real lspci exists, create a dummy
+                if [ ! -f /usr/bin/lspci.real ]; then
+                    echo '#!/bin/bash' > /usr/bin/lspci.real
+                    chmod +x /usr/bin/lspci.real
+                fi
+            "
+
+            # Create the wrapper script on host, then copy
+            cat > /tmp/_fake_lspci << 'LSPEOF'
+#!/bin/bash
+REAL=/usr/bin/lspci.real
+if [ ! -x "$REAL" ]; then REAL=/usr/sbin/lspci.real; fi
+GPU_NAME="__GPU_PLACEHOLDER__"
+if echo "$@" | grep -q '\-mm'; then
+    echo "\"01:00.0\" \"VGA compatible controller\" \"NVIDIA Corporation\" \"${GPU_NAME}\" \"\\""
+    if [ -x "$REAL" ]; then $REAL "$@" 2>/dev/null | grep -v -i 'VGA\|3D\|Display'; fi
+else
+    echo "01:00.0 VGA compatible controller: NVIDIA Corporation ${GPU_NAME} (rev a1)"
+    if [ -x "$REAL" ]; then $REAL "$@" 2>/dev/null | grep -v -i 'VGA\|3D\|Display'; fi
+fi
+LSPEOF
+            sed -i "s|__GPU_PLACEHOLDER__|${GPU_SPOOF_NAME}|g" /tmp/_fake_lspci
+            docker cp /tmp/_fake_lspci "$VM_NAME":/usr/bin/lspci
+            docker exec "$VM_NAME" chmod +x /usr/bin/lspci
+            rm -f /tmp/_fake_lspci
+
+            # --- Fake lshw display output (fallback detection) ---
+            docker exec "$VM_NAME" bash -c "
+                if [ -f /usr/bin/lshw ] && [ ! -f /usr/bin/lshw.real ]; then
+                    cp /usr/bin/lshw /usr/bin/lshw.real
+                fi
+                if [ -f /usr/sbin/lshw ] && [ ! -f /usr/sbin/lshw.real ]; then
+                    cp /usr/sbin/lshw /usr/sbin/lshw.real
+                fi
+            " 2>/dev/null
+
+            cat > /tmp/_fake_lshw << LSHWEOF
+#!/bin/bash
+REAL=/usr/bin/lshw.real
+if [ ! -x "\$REAL" ]; then REAL=/usr/sbin/lshw.real; fi
+if echo "\$@" | grep -q 'display\|C display'; then
+    echo '*-display'
+    echo '     description: VGA compatible controller'
+    echo "     product: ${GPU_SPOOF_NAME}"
+    echo '     vendor: NVIDIA Corporation'
+    echo '     physical id: 0'
+    echo '     bus info: pci@0000:01:00.0'
+    echo '     version: a1'
+    echo '     width: 64 bits'
+    echo '     clock: 33MHz'
+    echo '     capabilities: vga_controller bus_master cap_list rom'
+    echo '     configuration: driver=nvidia latency=0'
+    echo '     resources: irq:147 memory:fb000000-fbffffff memory:c0000000-cfffffff memory:d0000000-d1ffffff ioport:e000(size=128)'
+else
+    if [ -x "\$REAL" ]; then \$REAL "\$@"; fi
+fi
+LSHWEOF
+            docker cp /tmp/_fake_lshw "$VM_NAME":/usr/bin/lshw
+            docker exec "$VM_NAME" chmod +x /usr/bin/lshw 2>/dev/null
+            rm -f /tmp/_fake_lshw
+
+            # --- Fake /proc/driver/nvidia/gpus ---
             docker exec "$VM_NAME" bash -c "mkdir -p /proc/driver/nvidia/gpus/0000:00:04.0"
             docker exec "$VM_NAME" bash -c "echo 'Model: \t${GPU_SPOOF_NAME}' > /proc/driver/nvidia/gpus/0000:00:04.0/information"
             docker exec "$VM_NAME" bash -c "echo 'IRQ:   \t147' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
@@ -1248,13 +1425,28 @@ SMIEOF
             docker exec "$VM_NAME" bash -c "echo 'Video BIOS: \t${GPU_SPOOF_NAME}' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
             docker exec "$VM_NAME" bash -c "echo 'Bus Type: \tPCIe' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
 
-            # Fake /sys/class/nvidia capable
+            # --- Fake /sys/class/nvidia capable ---
             docker exec "$VM_NAME" bash -c "mkdir -p /sys/class/nvidia && echo '1' > /sys/class/nvidia/capable 2>/dev/null"
 
-            # Spoof neofetch GPU detection
-            docker exec "$VM_NAME" bash -c "if [ -f /usr/bin/neofetch ]; then
-                sed -i 's|GPU:.*|GPU: ${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB / ${vram_gb}GB]|g' /usr/bin/neofetch 2>/dev/null
-            fi"
+            # --- Override neofetch get_gpu function (guaranteed detection) ---
+            cat > /tmp/_neofetch_gpu << NFEOF
+
+# TASIN: Override GPU detection
+get_gpu() {
+    gpu="${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB]"
+    prin "${GPU_SPOOF_NAME}"
+}
+NFEOF
+            docker cp /tmp/_neofetch_gpu "$VM_NAME":/tmp/_neofetch_gpu
+            docker exec "$VM_NAME" bash -c "
+                if [ -f /usr/bin/neofetch ]; then
+                    # Remove any previous TASIN override
+                    sed -i '/# TASIN: Override GPU detection/,/^}$/d' /usr/bin/neofetch
+                    cat /tmp/_neofetch_gpu >> /usr/bin/neofetch
+                    rm -f /tmp/_neofetch_gpu
+                fi
+            "
+            rm -f /tmp/_neofetch_gpu
 
             echo -e " ${GREEN}✔ GPU spoofed: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB)${NC}"
         fi
