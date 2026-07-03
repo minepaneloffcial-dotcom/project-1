@@ -639,10 +639,13 @@ manage_vm_menu() {
                             apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1
                         fi
                         sleep 2
-                        tc qdisc del dev eth0 root 2>/dev/null
-                        tc qdisc add dev eth0 root handle 1: htb default 10
-                        tc class add dev eth0 parent 1: classid 1:10 htb rate ${SAVED_SPEED}mbit ceil ${SAVED_SPEED}mbit
-                        tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+                        IFACE=\$(ip route 2>/dev/null | awk '/default/ {print \$5}' | head -1)
+                        [ -z \"\$IFACE\" ] && IFACE=eth0
+                        tc qdisc del dev \$IFACE root 2>/dev/null
+                        tc qdisc add dev \$IFACE root handle 1: htb default 10
+                        tc class add dev \$IFACE parent 1: classid 1:10 htb rate ${SAVED_SPEED}mbit ceil ${SAVED_SPEED}mbit burst 15k cburst 15k
+                        tc qdisc add dev \$IFACE parent 1:10 handle 10: sfq perturb 10
+                        echo '${SAVED_SPEED}' > /root/.speed_limit_value
                     " 2>/dev/null
                 fi
                 echo -e " ${GREEN}✔ Rebooted.${NC}"
@@ -664,10 +667,13 @@ manage_vm_menu() {
                             apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1
                         fi
                         sleep 2
-                        tc qdisc del dev eth0 root 2>/dev/null
-                        tc qdisc add dev eth0 root handle 1: htb default 10
-                        tc class add dev eth0 parent 1: classid 1:10 htb rate ${SAVED_SPEED}mbit ceil ${SAVED_SPEED}mbit
-                        tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+                        IFACE=\$(ip route 2>/dev/null | awk '/default/ {print \$5}' | head -1)
+                        [ -z \"\$IFACE\" ] && IFACE=eth0
+                        tc qdisc del dev \$IFACE root 2>/dev/null
+                        tc qdisc add dev \$IFACE root handle 1: htb default 10
+                        tc class add dev \$IFACE parent 1: classid 1:10 htb rate ${SAVED_SPEED}mbit ceil ${SAVED_SPEED}mbit burst 15k cburst 15k
+                        tc qdisc add dev \$IFACE parent 1:10 handle 10: sfq perturb 10
+                        echo '${SAVED_SPEED}' > /root/.speed_limit_value
                     " 2>/dev/null
                 fi
                 echo -e " ${GREEN}✔ Started.${NC}"
@@ -1240,21 +1246,31 @@ DOCKER_START
                     apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1
                     apk add iproute2 >/dev/null 2>&1
                 fi
-                tc qdisc del dev eth0 root 2>/dev/null
-                tc qdisc add dev eth0 root handle 1: htb default 10
-                tc class add dev eth0 parent 1: classid 1:10 htb rate ${NET_SPEED}mbit ceil ${NET_SPEED}mbit
-                tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+            " 2>/dev/null
+            # Detect network interface inside container
+            C_IFACE=$(docker exec "$VM_NAME" bash -c 'ip route 2>/dev/null | awk "/default/ {print \$5}" | head -1' 2>/dev/null)
+            [ -z "$C_IFACE" ] && C_IFACE=eth0
+            # Apply tc rules using detected interface
+            docker exec "$VM_NAME" bash -c "
+                tc qdisc del dev $C_IFACE root 2>/dev/null
+                tc qdisc add dev $C_IFACE root handle 1: htb default 10
+                tc class add dev $C_IFACE parent 1: classid 1:10 htb rate ${NET_SPEED}mbit ceil ${NET_SPEED}mbit burst 15k cburst 15k
+                tc qdisc add dev $C_IFACE parent 1:10 handle 10: sfq perturb 10
             " 2>/dev/null
 
             # Create persistence script for container restarts
-            cat > /tmp/_speed_limit.sh << SPEEDLIMEOF
+            cat > /tmp/_speed_limit.sh << 'SPEEDLIMEOF'
 #!/bin/bash
 sleep 2
 if command -v tc >/dev/null 2>&1; then
-    tc qdisc del dev eth0 root 2>/dev/null
-    tc qdisc add dev eth0 root handle 1: htb default 10
-    tc class add dev eth0 parent 1: classid 1:10 htb rate ${NET_SPEED}mbit ceil ${NET_SPEED}mbit
-    tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+    IFACE=$(ip route 2>/dev/null | awk '/default/ {print $5}' | head -1)
+    [ -z "$IFACE" ] && IFACE=eth0
+    SPEED=$(cat /root/.speed_limit_value 2>/dev/null)
+    [ -z "$SPEED" ] && exit 0
+    tc qdisc del dev $IFACE root 2>/dev/null
+    tc qdisc add dev $IFACE root handle 1: htb default 10
+    tc class add dev $IFACE parent 1: classid 1:10 htb rate ${SPEED}mbit ceil ${SPEED}mbit burst 15k cburst 15k
+    tc qdisc add dev $IFACE parent 1:10 handle 10: sfq perturb 10
 fi
 SPEEDLIMEOF
             docker cp /tmp/_speed_limit.sh "$VM_NAME":/usr/local/bin/apply_speed_limit.sh
@@ -1286,6 +1302,8 @@ SLEOF
 
             # Save speed config for re-apply on reboot from manage menu
             echo "$NET_SPEED" > "/root/speed_${VM_ID_NAME}.info"
+            # Also save inside container for persistence script
+            docker exec "$VM_NAME" bash -c "echo ${NET_SPEED} > /root/.speed_limit_value" 2>/dev/null
 
             echo -e " ${GREEN}✔ Speed limited to ${NET_SPEED}Mbps${NC}"
         fi
@@ -1299,14 +1317,24 @@ SLEOF
             sleep 2
         done
 
-        # Apply Model Name to neofetch (now guaranteed neofetch exists)
+        # Apply Model Name to neofetch (function override - bulletproof)
         if [ -n "$MODEL_NAME" ]; then
+            cat > /tmp/_neofetch_host << 'HOSTEOF'
+# TASIN: Override Host/Model detection
+get_host() {
+    host="__MODEL_PLACEHOLDER__"
+}
+HOSTEOF
+            sed -i "s|__MODEL_PLACEHOLDER__|${MODEL_NAME}|g" /tmp/_neofetch_host
+            docker cp /tmp/_neofetch_host "$VM_NAME":/tmp/_neofetch_host
             docker exec "$VM_NAME" bash -c "
                 if [ -f /usr/bin/neofetch ]; then
-                    sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch
-                    sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch
+                    sed -i '/# TASIN: Override Host/,/^}$/d' /usr/bin/neofetch
+                    cat /tmp/_neofetch_host >> /usr/bin/neofetch
+                    rm -f /tmp/_neofetch_host
                 fi
             " 2>/dev/null
+            rm -f /tmp/_neofetch_host
         fi
 
         # 6. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
@@ -1439,13 +1467,20 @@ LSHWEOF
             docker exec "$VM_NAME" bash -c "mkdir -p /sys/class/nvidia && echo '1' > /sys/class/nvidia/capable 2>/dev/null"
 
             # --- Override neofetch get_gpu function (guaranteed detection) ---
-            cat > /tmp/_neofetch_gpu << NFEOF
+            cat > /tmp/_neofetch_gpu << 'NFEOF'
 
 # TASIN: Override GPU detection
 get_gpu() {
-    gpu="${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB]"
+    gpu="__GPU_NAME_PLACEHOLDER__ [__GPU_VRAM_PLACEHOLDER__MB]"
+    gpu_brand="NVIDIA"
+}
+
+get_gpu_legacy() {
+    :
 }
 NFEOF
+            sed -i "s|__GPU_NAME_PLACEHOLDER__|${GPU_SPOOF_NAME}|g" /tmp/_neofetch_gpu
+            sed -i "s|__GPU_VRAM_PLACEHOLDER__|${GPU_SPOOF_VRAM}|g" /tmp/_neofetch_gpu
             docker cp /tmp/_neofetch_gpu "$VM_NAME":/tmp/_neofetch_gpu
             docker exec "$VM_NAME" bash -c "
                 if [ -f /usr/bin/neofetch ]; then
@@ -1696,17 +1731,21 @@ edit_vm_config() {
                         if ! command -v tc >/dev/null 2>&1; then
                             apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1
                         fi
-                        tc qdisc del dev eth0 root 2>/dev/null
-                        tc qdisc add dev eth0 root handle 1: htb default 10
-                        tc class add dev eth0 parent 1: classid 1:10 htb rate ${new_speed}mbit ceil ${new_speed}mbit
-                        tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10
+                        IFACE=\$(ip route 2>/dev/null | awk '/default/ {print \$5}' | head -1)
+                        [ -z "\$IFACE" ] && IFACE=eth0
+                        tc qdisc del dev \$IFACE root 2>/dev/null
+                        tc qdisc add dev \$IFACE root handle 1: htb default 10
+                        tc class add dev \$IFACE parent 1: classid 1:10 htb rate ${new_speed}mbit ceil ${new_speed}mbit burst 15k cburst 15k
+                        tc qdisc add dev \$IFACE parent 1:10 handle 10: sfq perturb 10
+                        echo '${new_speed}' > /root/.speed_limit_value
                     " 2>/dev/null
                     echo "$new_speed" > "/root/speed_${display_name}.info"
                     echo -e " ${GREEN}✔ Speed updated to ${new_speed}Mbps${NC}"
                     log_msg "Edit: $vm_name speed changed to ${new_speed}Mbps"
                 else
-                    docker exec "$vm_name" bash -c "tc qdisc del dev eth0 root 2>/dev/null" 2>/dev/null
+                    docker exec "$vm_name" bash -c "IFACE=\$(ip route 2>/dev/null | awk '/default/ {print \$5}' | head -1); [ -z "\$IFACE" ] && IFACE=eth0; tc qdisc del dev \$IFACE root 2>/dev/null" 2>/dev/null
                     rm -f "/root/speed_${display_name}.info"
+                    docker exec "$vm_name" bash -c "rm -f /root/.speed_limit_value" 2>/dev/null
                     echo -e " ${GREEN}✔ Speed limit removed (unlimited)${NC}"
                     log_msg "Edit: $vm_name speed limit removed"
                 fi
@@ -1836,7 +1875,7 @@ while true; do
                 TYPE_TAG="${GREEN}VPS${NC}   "
             fi
 
-            local pad_name=$(printf '%-18s' "$DISPLAY_NAME")
+            pad_name=$(printf '%-18s' "$DISPLAY_NAME")
             echo -e "  ${DIM}│${NC}  ${WHITE}[$i]${NC} ${CYAN}${pad_name}${NC} ${TYPE_TAG} $STATE   ${DIM}│${NC}"
             ((i++))
         done
@@ -1852,43 +1891,7 @@ while true; do
     echo -n " ${WHITE}Enter Number or command [N/F/X/I/E/P]:${NC} "
     read -r CHOICE
 
-    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "      ${WHITE}TASIN VPS CONTROL PANEL v2.0${NC}"
-    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -e ""
 
-    if [ ${#VMS[@]} -eq 0 ]; then
-        echo -e "  ${YELLOW}(No VMs created yet)${NC}"
-    else
-        i=1
-        for vm in "${VMS[@]}"; do
-            STATE=$(get_status "$vm")
-            DISPLAY_NAME=${vm#tasin-vm-}
-
-            if [ -f "/root/vm_type_$DISPLAY_NAME.info" ] && [ "$(cat /root/vm_type_$DISPLAY_NAME.info)" == "vds" ]; then
-                TYPE_TAG="${PURPLE}[VDS]${NC}"
-            else
-                TYPE_TAG="${GREEN}[VPS]${NC}"
-            fi
-
-            VM_IP=$(get_vm_ip "$vm")
-            IP_TAG=""
-            if [ -n "$VM_IP" ]; then
-                IP_TAG=" ${CYAN}${VM_IP}${NC}"
-            fi
-
-            echo -e "  ${WHITE}[$i]${NC} $DISPLAY_NAME ${TYPE_TAG}${IP_TAG}  $STATE"
-            ((i++))
-        done
-    fi
-
-    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -e "  ${GREEN}[N]${NC} Create New VM"
-    echo -e "  ${YELLOW}[F]${NC} Fix Docker (OverlayFS Error)"
-    echo -e "  ${RED}[E]${NC} Exit Panel"
-    echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Enter Number to Manage or [N]: "
-    read -r CHOICE
 
     if [[ "$CHOICE" == "n" || "$CHOICE" == "N" ]]; then
         clear
@@ -1933,12 +1936,16 @@ while true; do
             echo -e " ${YELLOW}No VMs to show info for.${NC}"
             sleep 2
         else
+            clear
+            echo -e "  ${PREMIUM}━━ SELECT VM FOR INFO ━━${NC}  ${PREMIUM}PREMIUM++${NC}"
+            j=1; for _v in "${VMS[@]}"; do echo -e "   ${WHITE}[$j]${NC} ${CYAN}${_v#tasin-vm-}${NC}"; ((j++)); done
+            echo -e "   ${DIM}[0] Cancel${NC}"
             echo -n " Enter VM number: "
             read -r info_num
             if [[ "$info_num" =~ ^[0-9]+$ ]] && [ "$info_num" -gt 0 ] && [ "$info_num" -le "${#VMS[@]}" ]; then
                 show_vm_info "${VMS[$((info_num-1))]}"
             else
-                echo -e " ${RED}Invalid selection.${NC}"
+                echo -e " ${YELLOW}Cancelled.${NC}"
                 sleep 1
             fi
         fi
@@ -1947,12 +1954,16 @@ while true; do
             echo -e " ${YELLOW}No VMs to edit.${NC}"
             sleep 2
         else
+            clear
+            echo -e "  ${PREMIUM}━━ SELECT VM TO EDIT ━━${NC}  ${PREMIUM}PREMIUM++${NC}"
+            j=1; for _v in "${VMS[@]}"; do echo -e "   ${WHITE}[$j]${NC} ${CYAN}${_v#tasin-vm-}${NC}"; ((j++)); done
+            echo -e "   ${DIM}[0] Cancel${NC}"
             echo -n " Enter VM number: "
             read -r edit_num
             if [[ "$edit_num" =~ ^[0-9]+$ ]] && [ "$edit_num" -gt 0 ] && [ "$edit_num" -le "${#VMS[@]}" ]; then
                 edit_vm_config "${VMS[$((edit_num-1))]}"
             else
-                echo -e " ${RED}Invalid selection.${NC}"
+                echo -e " ${YELLOW}Cancelled.${NC}"
                 sleep 1
             fi
         fi
@@ -1961,12 +1972,16 @@ while true; do
             echo -e " ${YELLOW}No VMs to monitor.${NC}"
             sleep 2
         else
+            clear
+            echo -e "  ${PREMIUM}━━ SELECT VM FOR LIVE PERFORMANCE ━━${NC}  ${PREMIUM}PREMIUM++${NC}"
+            j=1; for _v in "${VMS[@]}"; do echo -e "   ${WHITE}[$j]${NC} ${CYAN}${_v#tasin-vm-}${NC}"; ((j++)); done
+            echo -e "   ${DIM}[0] Cancel${NC}"
             echo -n " Enter VM number: "
             read -r perf_num
             if [[ "$perf_num" =~ ^[0-9]+$ ]] && [ "$perf_num" -gt 0 ] && [ "$perf_num" -le "${#VMS[@]}" ]; then
                 live_vm_performance "${VMS[$((perf_num-1))]}"
             else
-                echo -e " ${RED}Invalid selection.${NC}"
+                echo -e " ${YELLOW}Cancelled.${NC}"
                 sleep 1
             fi
         fi
