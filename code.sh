@@ -844,49 +844,86 @@ create_vm() {
     fi
 
     # ==========================================
-    # GPU PASSTHROUGH
+    # NETWORK SPEED LIMIT
+    # ==========================================
+    clear
+    NET_SPEED=""
+    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}SET INTERNET SPEED${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " Enter speed in Mbps (e.g. 1000 = 1Gbps, 500 = 500Mbps)"
+    echo -e " Leave blank or type ${YELLOW}default${NC} for unlimited speed."
+    echo -e ""
+    echo -n " Set Internet Speed (Mbps) [default]: "
+    read -r speed_input
+    if [ -n "$speed_input" ] && [[ "$speed_input" =~ ^[0-9]+$ ]]; then
+        NET_SPEED="$speed_input"
+        if [ "$NET_SPEED" -ge 1000 ]; then
+            echo -e " ${GREEN}✔ Speed set to $((NET_SPEED/1000))Gbps${NC}"
+        else
+            echo -e " ${GREEN}✔ Speed set to ${NET_SPEED}Mbps${NC}"
+        fi
+    else
+        echo -e " ${YELLOW}✔ Using default (unlimited).${NC}"
+    fi
+    sleep 1
+
+    # ==========================================
+    # GPU SETUP
     # ==========================================
     clear
     GPU_DEVICE=""
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "         ${WHITE}GPU PASSTHROUGH${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-        echo -e " Detected GPUs on host:${NC}"
-        echo -e ""
-        nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader 2>/dev/null | while IFS=',' read -r idx name mem; do
-            echo -e "   ${GREEN}GPU $idx${NC}: ${WHITE}${name// /} (${mem// /})${NC}"
-        done
-        echo -e ""
-        echo -e " 1) ${GREEN}All GPUs${NC} (pass all detected GPUs)"
-        echo -e " 2) ${YELLOW}Specific GPU${NC} (choose one)"
-        echo -e " 0) ${RED}No GPU${NC}"
-        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-        echo -n " Selection [0-2]: "
-        read -r gpu_sel
+    GPU_SPOOF_NAME=""
+    GPU_SPOOF_VRAM=""
+    echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}GPU CONFIGURATION${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo -n " Do you want GPU? (y/n): "
+    read -r gpu_yes
 
-        case "$gpu_sel" in
-            1)
-                GPU_DEVICE="all"
-                echo -e " ${GREEN}✔ All GPUs will be passed to VM.${NC}"
-                sleep 1
-                ;;
-            2)
-                echo -n " Enter GPU index (e.g. 0): "
+    if [[ "$gpu_yes" == "y" || "$gpu_yes" == "Y" ]]; then
+        # Custom GPU Name
+        echo -n " Enter GPU Name (e.g. NVIDIA RTX 4090): "
+        read -r GPU_SPOOF_NAME
+        if [ -z "$GPU_SPOOF_NAME" ]; then
+            GPU_SPOOF_NAME="NVIDIA RTX 4090"
+        fi
+
+        # Custom VRAM
+        echo -n " Enter VRAM in MB (e.g. 24576 for 24GB): "
+        read -r vram_input
+        if [ -n "$vram_input" ] && [[ "$vram_input" =~ ^[0-9]+$ ]]; then
+            GPU_SPOOF_VRAM="$vram_input"
+        else
+            GPU_SPOOF_VRAM="24576"
+        fi
+        echo -e " ${GREEN}✔ GPU: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB)${NC}"
+
+        # Physical GPU passthrough (only if host has real GPUs)
+        if command -v nvidia-smi >/dev/null 2>&1; then
+            echo -e ""
+            echo -e " Detected physical GPUs on host:"
+            nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader 2>/dev/null | while IFS=',' read -r idx name mem; do
+                echo -e "   ${GREEN}GPU $idx${NC}: ${WHITE}${name// /} (${mem// /})${NC}"
+            done
+            echo -e ""
+            echo -n " Pass a real GPU device? (y/n): "
+            read -r real_gpu_yes
+
+            if [[ "$real_gpu_yes" == "y" || "$real_gpu_yes" == "Y" ]]; then
+                echo -n " Enter GPU index (e.g. 0) or 'all': "
                 read -r gpu_idx
                 if [ -n "$gpu_idx" ]; then
                     GPU_DEVICE="$gpu_idx"
-                    echo -e " ${GREEN}✔ GPU $gpu_idx will be passed to VM.${NC}"
+                    echo -e " ${GREEN}✔ Real GPU $gpu_idx will be passed + spoofed as ${GPU_SPOOF_NAME}.${NC}"
                 fi
-                sleep 1
-                ;;
-            *)
-                GPU_DEVICE=""
-                ;;
-        esac
-    else
-        echo -e "${YELLOW}⚠ No NVIDIA GPU detected on host. Skipping GPU setup.${NC}"
-        sleep 1
+            else
+                echo -e " ${GREEN}✔ GPU will be spoofed only (no real device).${NC}"
+            fi
+        else
+            echo -e " ${YELLOW}⚠ No physical GPU on host. Spoofing GPU name only.${NC}"
+        fi
+        sleep 2
     fi
 
     # ==========================================
@@ -995,13 +1032,14 @@ create_vm() {
     # ==========================================
     CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped -v $DATA_DIR:/root:rw"
 
-    # GPU PASSTHROUGH
+    # GPU PASSTHROUGH (real device, only if user chose one)
     if [ -n "$GPU_DEVICE" ]; then
         if [ "$GPU_DEVICE" == "all" ]; then
             CMD="$CMD --gpus all"
         else
             CMD="$CMD --gpus device=$GPU_DEVICE"
         fi
+        CMD="$CMD --runtime=nvidia"
     fi
 
     if [ "$PTERO_MODE" = true ]; then
@@ -1100,7 +1138,7 @@ UPTIME_WRAP
         docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/uptime"
         rm /tmp/uptime_wrap
 
-        # 3. Install Packages
+        # 3. Install Packages + Apply Network Speed + GPU Spoof
         if [ "$PTERO_MODE" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
@@ -1137,6 +1175,88 @@ DOCKER_START
                 docker exec "$VM_NAME" $VM_SHELL -c "if [ -f /usr/bin/neofetch ]; then sed -i 's|/sys/class/dmi/id/product_name|/etc/custom_product_name|g; s|/sys/devices/virtual/dmi/id/product_name|/etc/custom_product_name|g' /usr/bin/neofetch; fi"
                 docker exec "$VM_NAME" $VM_SHELL -c "if [ -f /usr/bin/neofetch ]; then sed -i 's|/sys/class/dmi/id/sys_vendor|/etc/custom_sys_vendor|g; s|/sys/devices/virtual/dmi/id/sys_vendor|/etc/custom_sys_vendor|g' /usr/bin/neofetch; fi"
             fi
+        fi
+
+        # 4. Apply Network Speed Limit
+        if [ -n "$NET_SPEED" ]; then
+            echo -e " ${BLUE}∞${NC} Applying network speed limit..."
+            docker exec "$VM_NAME" bash -c "
+                if command -v tc >/dev/null 2>&1; then
+                    tc qdisc add dev eth0 root handle 1: htb default 10 2>/dev/null
+                    tc class add dev eth0 parent 1: classid 1:10 htb rate ${NET_SPEED}mbit ceil ${NET_SPEED}mbit 2>/dev/null
+                    tc qdisc add dev eth0 parent 1:10 handle 10: sfq perturb 10 2>/dev/null
+                    echo 'OK'
+                else
+                    echo 'NO_TC'
+                fi
+            " >/dev/null 2>&1
+            echo -e " ${GREEN}✔ Speed limited to ${NET_SPEED}Mbps${NC}"
+        fi
+
+        # 5. Apply GPU Spoofing (fake nvidia-smi)
+        if [ -n "$GPU_SPOOF_NAME" ]; then
+            echo -e " ${BLUE}∞${NC} Setting up GPU spoof..."
+
+            # Build a padded GPU name for nvidia-smi table formatting
+            local pad_name=$(printf '%-23s' "$GPU_SPOOF_NAME")
+            local pad_vram=$(printf '%-17s' "${GPU_SPOOF_VRAM}MiB")
+            local short_vram=$((GPU_SPOOF_VRAM))
+            local vram_gb=$((short_vram / 1024))
+            if [ $vram_gb -eq 0 ]; then vram_gb=1; fi
+
+            docker exec "$VM_NAME" bash -c "mkdir -p /usr/local/bin /etc/nvidia"
+
+            # Fake nvidia-smi
+            cat > /tmp/_fake_smi << SMIEOF
+#!/bin/bash
+if [ "\$1" == "-L" ] 2>/dev/null; then
+    echo "libcuda.so.1"
+    exit 0
+fi
+echo ""
+echo "+-----------------------------------------------------------------------------------------+"
+echo "| NVIDIA-SMI 550.54.15              Driver Version: 550.54.15         CUDA Version: 12.4  |"
+echo "+-----------------------------------------+------------------------+---------------------+"
+echo "| GPU  Name                           | Persistence-M| Bus-Id        | Disp.A | Volatile Uncorr. ECC |"
+echo "| Fan  Temp  Perf            Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M.  |"
+echo "|=========================================+========================+=====================|"
+echo "|   0  ${pad_name}| On  | 00000000:00:04.0 Off |                    0   |"
+echo "| 30%   42C    P8               18W / 350W|     ${pad_vram}|      0%      Default   |"
+echo "|                                         |                        |                     N/A |"
+echo "+-----------------------------------------+------------------------+---------------------+"
+SMIEOF
+            docker cp /tmp/_fake_smi "$VM_NAME":/usr/bin/nvidia-smi
+            docker exec "$VM_NAME" chmod +x /usr/bin/nvidia-smi
+            rm -f /tmp/_fake_smi
+
+            # Fake libcuda.so stub
+            docker exec "$VM_NAME" bash -c "mkdir -p /usr/lib/x86_64-linux-gnu"
+            docker exec "$VM_NAME" bash -c "echo '/* fake libcuda stub */' > /usr/lib/x86_64-linux-gnu/libcuda.so.1"
+            docker exec "$VM_NAME" bash -c "ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so 2>/dev/null"
+
+            # Fake lspci GPU entry
+            docker exec "$VM_NAME" bash -c "if [ -f /usr/bin/lspci ]; then
+                mkdir -p /usr/share/misc
+                echo '3d:00.0 VGA compatible controller: NVIDIA Corporation ${GPU_SPOOF_NAME} (rev a1)' > /usr/share/misc/pci.ids.gpu
+            fi" 2>/dev/null
+
+            # Fake /proc/driver/nvidia/gpus
+            docker exec "$VM_NAME" bash -c "mkdir -p /proc/driver/nvidia/gpus/0000:00:04.0"
+            docker exec "$VM_NAME" bash -c "echo 'Model: \t${GPU_SPOOF_NAME}' > /proc/driver/nvidia/gpus/0000:00:04.0/information"
+            docker exec "$VM_NAME" bash -c "echo 'IRQ:   \t147' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
+            docker exec "$VM_NAME" bash -c "echo 'GPU UUID: \tGPU-$(head -c 16 /dev/urandom | xxd -p)' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
+            docker exec "$VM_NAME" bash -c "echo 'Video BIOS: \t${GPU_SPOOF_NAME}' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
+            docker exec "$VM_NAME" bash -c "echo 'Bus Type: \tPCIe' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
+
+            # Fake /sys/class/nvidia capable
+            docker exec "$VM_NAME" bash -c "mkdir -p /sys/class/nvidia && echo '1' > /sys/class/nvidia/capable 2>/dev/null"
+
+            # Spoof neofetch GPU detection
+            docker exec "$VM_NAME" bash -c "if [ -f /usr/bin/neofetch ]; then
+                sed -i 's|GPU:.*|GPU: ${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB / ${vram_gb}GB]|g' /usr/bin/neofetch 2>/dev/null
+            fi"
+
+            echo -e " ${GREEN}✔ GPU spoofed: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB)${NC}"
         fi
 
         # ==========================================
