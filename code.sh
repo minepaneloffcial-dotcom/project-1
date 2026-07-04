@@ -923,10 +923,12 @@ create_vm() {
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}GPU CONFIGURATION${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-    echo -n " Do you want GPU? (y/n): "
+    printf " Do you want GPU? (y/n): "
     read -r gpu_yes
+    gpu_yes="${gpu_yes//$'\r'/}"
+    gpu_yes="${gpu_yes,,}"
 
-    if [[ "$gpu_yes" == "y" || "$gpu_yes" == "Y" ]]; then
+    if [[ "$gpu_yes" == "y" ]]; then
         echo -e ""
         echo -e " ${GREEN}Select GPU Preset:${NC}"
         echo -e "   1) ${CYAN}NVIDIA RTX 4090${NC}        + 24GB VRAM"
@@ -982,10 +984,12 @@ create_vm() {
                 echo -e "   ${GREEN}GPU $idx${NC}: ${WHITE}${name// /} (${mem// /})${NC}"
             done
             echo -e ""
-            echo -n " Pass a real GPU device? (y/n): "
+            printf " Pass a real GPU device? (y/n): "
             read -r real_gpu_yes
+            real_gpu_yes="${real_gpu_yes//$'\r'/}"
+            real_gpu_yes="${real_gpu_yes,,}"
 
-            if [[ "$real_gpu_yes" == "y" || "$real_gpu_yes" == "Y" ]]; then
+            if [[ "$real_gpu_yes" == "y" ]]; then
                 echo -n " Enter GPU index (e.g. 0) or 'all': "
                 read -r gpu_idx
                 if [ -n "$gpu_idx" ]; then
@@ -1013,11 +1017,14 @@ create_vm() {
     echo -e " 3) ${GREEN}Custom / Manual${NC}"
     echo -e " 4) Default (Use Host CPU)"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Select Vendor [1-4]: "
+    printf " Select Vendor [1-4]: "
     read -r vendor_sel
+    vendor_sel="${vendor_sel//$'\r'/}"
 
     V_ID="GenuineIntel"
     C_NAME="Intel Xeon"
+    C_BASE_MHZ="2500.000"
+    C_BOOST_MHZ="3500.000"
     C_MHZ="2500.000"
     USE_SPOOF=true
 
@@ -1025,52 +1032,122 @@ create_vm() {
         1)
             V_ID="AuthenticAMD"
             clear
-            echo -e " 1) AMD EPYC 9654 (96-Core)"
-            echo -e " 2) AMD EPYC 7763 (64-Core)"
-            echo -e " 3) AMD Ryzen 9 7950X3D"
-            echo -e " 4) AMD Ryzen 9 5950X"
-            echo -e " 5) AMD Ryzen Threadripper PRO 5995WX"
-            echo -n " Select Model [1-5]: "
+            echo -e " ${RED}AMD Processor Models${NC}"
+            echo -e ""
+            echo -e " ${YELLOW}Ryzen Desktop:${NC}"
+            echo -e "   1)  ${CYAN}AMD Ryzen 9 7950X3D${NC}       (16-Core, 4.2/5.7 GHz)"
+            echo -e "   2)  ${CYAN}AMD Ryzen 9 7950X${NC}         (16-Core, 4.5/5.7 GHz)"
+            echo -e "   3)  ${CYAN}AMD Ryzen 9 5950X${NC}         (16-Core, 3.4/4.9 GHz)"
+            echo -e "   4)  ${CYAN}AMD Ryzen 9 5900X${NC}         (12-Core, 3.7/4.8 GHz)"
+            echo -e "   5)  ${CYAN}AMD Ryzen 7 7800X3D${NC}       (8-Core, 4.2/5.0 GHz)"
+            echo -e "   6)  ${CYAN}AMD Ryzen 7 5800X${NC}         (8-Core, 3.8/4.7 GHz)"
+            echo -e ""
+            echo -e " ${YELLOW}EPYC Server:${NC}"
+            echo -e "   7)  ${CYAN}AMD EPYC 9654${NC}             (96-Core, 2.2/3.7 GHz)"
+            echo -e "   8)  ${CYAN}AMD EPYC 9754${NC}             (96-Core, 2.7/3.8 GHz)"
+            echo -e "   9)  ${CYAN}AMD EPYC 7763${NC}             (64-Core, 2.25/3.45 GHz)"
+            echo -e ""
+            echo -e " ${YELLOW}Threadripper:${NC}"
+            echo -e "  10)  ${CYAN}AMD Threadripper PRO 5995WX${NC}  (64-Core, 2.7/4.5 GHz)"
+            echo -e "  11)  ${CYAN}AMD Threadripper PRO 5975WX${NC}  (32-Core, 3.2/4.6 GHz)"
+            echo -e ""
+            printf " Select Model [1-11]: "
             read -r amd_model
+            amd_model="${amd_model//$'\r'/}"
             case "$amd_model" in
-                1) C_NAME="AMD EPYC 9654 96-Core Processor"; C_MHZ="3700.000" ;;
-                2) C_NAME="AMD EPYC 7763 64-Core Processor"; C_MHZ="2450.000" ;;
-                3) C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"; C_MHZ="5700.000" ;;
-                4) C_NAME="AMD Ryzen 9 5950X 16-Core Processor"; C_MHZ="4900.000" ;;
-                5) C_NAME="AMD Ryzen Threadripper PRO 5995WX"; C_MHZ="4500.000" ;;
-                *) C_NAME="AMD EPYC Processor"; C_MHZ="3000.000" ;;
+                1)  C_NAME="AMD Ryzen 9 7950X3D 16-Core Processor"
+                    C_BASE_MHZ="4200.000"; C_BOOST_MHZ="5700.000" ;;
+                2)  C_NAME="AMD Ryzen 9 7950X 16-Core Processor"
+                    C_BASE_MHZ="4500.000"; C_BOOST_MHZ="5700.000" ;;
+                3)  C_NAME="AMD Ryzen 9 5950X 16-Core Processor"
+                    C_BASE_MHZ="3400.000"; C_BOOST_MHZ="4900.000" ;;
+                4)  C_NAME="AMD Ryzen 9 5900X 12-Core Processor"
+                    C_BASE_MHZ="3700.000"; C_BOOST_MHZ="4800.000" ;;
+                5)  C_NAME="AMD Ryzen 7 7800X3D 8-Core Processor"
+                    C_BASE_MHZ="4200.000"; C_BOOST_MHZ="5050.000" ;;
+                6)  C_NAME="AMD Ryzen 7 5800X 8-Core Processor"
+                    C_BASE_MHZ="3800.000"; C_BOOST_MHZ="4700.000" ;;
+                7)  C_NAME="AMD EPYC 9654 96-Core Processor"
+                    C_BASE_MHZ="2200.000"; C_BOOST_MHZ="3700.000" ;;
+                8)  C_NAME="AMD EPYC 9754 96-Core Processor"
+                    C_BASE_MHZ="2700.000"; C_BOOST_MHZ="3800.000" ;;
+                9)  C_NAME="AMD EPYC 7763 64-Core Processor"
+                    C_BASE_MHZ="2250.000"; C_BOOST_MHZ="3450.000" ;;
+                10) C_NAME="AMD Ryzen Threadripper PRO 5995WX 64-Core Processor"
+                    C_BASE_MHZ="2700.000"; C_BOOST_MHZ="4500.000" ;;
+                11) C_NAME="AMD Ryzen Threadripper PRO 5975WX 32-Core Processor"
+                    C_BASE_MHZ="3200.000"; C_BOOST_MHZ="4600.000" ;;
+                *)  C_NAME="AMD EPYC Processor"
+                    C_BASE_MHZ="3000.000"; C_BOOST_MHZ="3500.000" ;;
             esac
             ;;
         2)
             V_ID="GenuineIntel"
             clear
-            echo -e " 1) Intel Core i9-14900KS"
-            echo -e " 2) Intel Core i9-13900K"
-            echo -e " 3) Intel Xeon Platinum 8490H"
-            echo -e " 4) Intel Xeon Gold 6130"
-            echo -e " 5) Intel Core i7-12700K"
-            echo -n " Select Model [1-5]: "
+            echo -e " ${BLUE}Intel Processor Models${NC}"
+            echo -e ""
+            echo -e " ${YELLOW}Core i9 (Enthusiast):${NC}"
+            echo -e "   1)  ${CYAN}Intel Core i9-14900KS${NC}      (24-Core, 3.2/6.2 GHz)"
+            echo -e "   2)  ${CYAN}Intel Core i9-14900K${NC}       (24-Core, 3.2/6.0 GHz)"
+            echo -e "   3)  ${CYAN}Intel Core i9-13900K${NC}       (24-Core, 3.0/5.8 GHz)"
+            echo -e "   4)  ${CYAN}Intel Core i9-12900K${NC}       (16-Core, 2.4/5.2 GHz)"
+            echo -e ""
+            echo -e " ${YELLOW}Core i7 (Performance):${NC}"
+            echo -e "   5)  ${CYAN}Intel Core i7-14700K${NC}       (20-Core, 3.4/5.6 GHz)"
+            echo -e "   6)  ${CYAN}Intel Core i7-13700K${NC}       (16-Core, 2.4/5.4 GHz)"
+            echo -e "   7)  ${CYAN}Intel Core i7-12700K${NC}       (12-Core, 2.5/5.0 GHz)"
+            echo -e ""
+            echo -e " ${YELLOW}Xeon (Server):${NC}"
+            echo -e "   8)  ${CYAN}Intel Xeon Platinum 8490H${NC}  (60-Core, 1.8/3.5 GHz)"
+            echo -e "   9)  ${CYAN}Intel Xeon Platinum 8380${NC}   (40-Core, 2.3/3.4 GHz)"
+            echo -e "  10)  ${CYAN}Intel Xeon Gold 6130${NC}       (20-Core, 2.0/3.7 GHz)"
+            echo -e "  11)  ${CYAN}Intel Xeon W-2295${NC}          (18-Core, 2.3/4.5 GHz)"
+            echo -e ""
+            printf " Select Model [1-11]: "
             read -r intel_model
+            intel_model="${intel_model//$'\r'/}"
             case "$intel_model" in
-                1) C_NAME="Intel(R) Core(TM) i9-14900KS"; C_MHZ="6200.000" ;;
-                2) C_NAME="Intel(R) Core(TM) i9-13900K"; C_MHZ="5800.000" ;;
-                3) C_NAME="Intel(R) Xeon(R) Platinum 8490H"; C_MHZ="3500.000" ;;
-                4) C_NAME="Intel(R) Xeon(R) Gold 6130 CPU @ 2.10GHz"; C_MHZ="2100.000" ;;
-                5) C_NAME="Intel(R) Core(TM) i7-12700K"; C_MHZ="5000.000" ;;
-                *) C_NAME="Intel(R) Xeon(R) CPU"; C_MHZ="2500.000" ;;
+                1)  C_NAME="Intel(R) Core(TM) i9-14900KS"
+                    C_BASE_MHZ="3200.000"; C_BOOST_MHZ="6200.000" ;;
+                2)  C_NAME="Intel(R) Core(TM) i9-14900K"
+                    C_BASE_MHZ="3200.000"; C_BOOST_MHZ="6000.000" ;;
+                3)  C_NAME="Intel(R) Core(TM) i9-13900K"
+                    C_BASE_MHZ="3000.000"; C_BOOST_MHZ="5800.000" ;;
+                4)  C_NAME="Intel(R) Core(TM) i9-12900K"
+                    C_BASE_MHZ="2400.000"; C_BOOST_MHZ="5200.000" ;;
+                5)  C_NAME="Intel(R) Core(TM) i7-14700K"
+                    C_BASE_MHZ="3400.000"; C_BOOST_MHZ="5600.000" ;;
+                6)  C_NAME="Intel(R) Core(TM) i7-13700K"
+                    C_BASE_MHZ="2400.000"; C_BOOST_MHZ="5400.000" ;;
+                7)  C_NAME="Intel(R) Core(TM) i7-12700K"
+                    C_BASE_MHZ="2500.000"; C_BOOST_MHZ="5000.000" ;;
+                8)  C_NAME="Intel(R) Xeon(R) Platinum 8490H"
+                    C_BASE_MHZ="1800.000"; C_BOOST_MHZ="3500.000" ;;
+                9)  C_NAME="Intel(R) Xeon(R) Platinum 8380"
+                    C_BASE_MHZ="2300.000"; C_BOOST_MHZ="3400.000" ;;
+                10) C_NAME="Intel(R) Xeon(R) Gold 6130 CPU"
+                    C_BASE_MHZ="2000.000"; C_BOOST_MHZ="3700.000" ;;
+                11) C_NAME="Intel(R) Xeon(R) W-2295"
+                    C_BASE_MHZ="2300.000"; C_BOOST_MHZ="4500.000" ;;
+                *)  C_NAME="Intel(R) Xeon(R) CPU"
+                    C_BASE_MHZ="2500.000"; C_BOOST_MHZ="3500.000" ;;
             esac
             ;;
         3)
             clear
-            echo -n " 1. Enter Vendor ID: "
+            echo -e " ${GREEN}Custom CPU Configuration${NC}"
+            printf " 1. Enter Vendor ID (e.g. GenuineIntel / AuthenticAMD): "
             read -r V_ID
-            echo -n " 2. Enter Model Name: "
+            printf " 2. Enter Model Name: "
             read -r C_NAME
-            echo -n " 3. Enter Speed (MHz): "
-            read -r C_MHZ
+            printf " 3. Enter Base Speed (MHz, e.g. 3700.000): "
+            read -r C_BASE_MHZ
+            printf " 4. Enter Boost Speed (MHz, e.g. 4900.000): "
+            read -r C_BOOST_MHZ
             if [ -z "$V_ID" ]; then V_ID="GenuineIntel"; fi
             if [ -z "$C_NAME" ]; then C_NAME="Custom CPU"; fi
-            if [ -z "$C_MHZ" ]; then C_MHZ="2500.000"; fi
+            if [ -z "$C_BASE_MHZ" ]; then C_BASE_MHZ="2500.000"; fi
+            if [ -z "$C_BOOST_MHZ" ]; then C_BOOST_MHZ="3500.000"; fi
             ;;
         4)
             USE_SPOOF=false
@@ -1079,6 +1156,33 @@ create_vm() {
             USE_SPOOF=false
             ;;
     esac
+
+    # ==========================================
+    # CLOCK SPEED BOOST SELECTION
+    # ==========================================
+    if [ "$USE_SPOOF" = true ]; then
+        # Convert MHz to GHz for display
+        C_BASE_GHZ=$(awk "BEGIN {printf \"%.1f\", ${C_BASE_MHZ}/1000}")
+        C_BOOST_GHZ=$(awk "BEGIN {printf \"%.1f\", ${C_BOOST_MHZ}/1000}")
+
+        echo -e ""
+        echo -e " ${GOLD}${BOLD}CPU Selected: ${C_NAME}${NC}"
+        echo -e " ${DIM}Base: ${C_BASE_GHZ}GHz  |  Boost: ${C_BOOST_GHZ}GHz${NC}"
+        echo -e ""
+        printf " ${YELLOW}Do you want Clock Speed Boost? (y/n): ${NC}"
+        read -r boost_yes
+        boost_yes="${boost_yes//$'\r'/}"
+        boost_yes="${boost_yes,,}"
+
+        if [[ "$boost_yes" == "y" ]]; then
+            C_MHZ="$C_BOOST_MHZ"
+            echo -e " ${GREEN}✔ ${C_NAME} @ ${C_BASE_GHZ}GHz / ${C_BOOST_GHZ}GHz ${LIME}[Boosted]${NC}"
+        else
+            C_MHZ="$C_BASE_MHZ"
+            echo -e " ${GREEN}✔ ${C_NAME} @ ${C_BASE_GHZ}GHz ${DIM}[Base Speed]${NC}"
+        fi
+        sleep 2
+    fi
 
     # Generate CPU File
     if [ "$USE_SPOOF" = true ]; then
