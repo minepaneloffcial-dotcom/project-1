@@ -737,6 +737,28 @@ manage_vm_menu() {
 }
 
 # Accepts: $1 = VM_TYPE (vps/vds), $2 = REINSTALL_NAME (optional)
+parse_uptime_to_seconds() {
+    local input="$1"
+    local total=0
+    # Extract years
+    local years=$(echo "$input" | grep -oP '\d+(?=y)' | head -1)
+    [ -n "$years" ] && total=$((total + years * 365 * 86400))
+    # Extract days
+    local days=$(echo "$input" | grep -oP '\d+(?=d)' | head -1)
+    [ -n "$days" ] && total=$((total + days * 86400))
+    # Extract hours
+    local hours=$(echo "$input" | grep -oP '\d+(?=h)' | head -1)
+    [ -n "$hours" ] && total=$((total + hours * 3600))
+    # Extract minutes
+    local mins=$(echo "$input" | grep -oP '\d+(?=m)' | head -1)
+    [ -n "$mins" ] && total=$((total + mins * 60))
+    # If plain number, treat as days
+    if [ "$total" -eq 0 ] && [[ "$input" =~ ^[0-9]+$ ]]; then
+        total=$((input * 86400))
+    fi
+    echo "$total"
+}
+
 create_vm() {
     local VM_TYPE=${1:-vps}
     local REINSTALL_NAME=${2:-}
@@ -803,15 +825,15 @@ create_vm() {
     VM_SHELL="/bin/bash"
     IS_FULL=true
     case "$os_sel" in
-        1) IMG="ubuntu:22.04" ;;
-        2) IMG="ubuntu:20.04" ;;
-        3) IMG="ubuntu:18.04" ;;
-        4) IMG="debian:12" ;;
-        5) IMG="debian:11" ;;
-        6) IMG="debian:10" ;;
-        7) IMG="kalilinux/kali-rolling:latest" ;;
+        1) IMG="jrei/systemd-ubuntu:22.04" ;;
+        2) IMG="jrei/systemd-ubuntu:20.04" ;;
+        3) IMG="jrei/systemd-ubuntu:18.04" ;;
+        4) IMG="jrei/systemd-debian:12" ;;
+        5) IMG="jrei/systemd-debian:11" ;;
+        6) IMG="debian:10"; IS_FULL=false ;;
+        7) IMG="kalilinux/kali-rolling:latest"; IS_FULL=false ;;
         8) IMG="alpine:latest"; VM_SHELL="/bin/sh"; IS_FULL=false ;;
-        *) IMG="ubuntu:22.04" ;;
+        *) IMG="jrei/systemd-ubuntu:22.04" ;;
     esac
 
     # ==========================================
@@ -857,7 +879,7 @@ create_vm() {
     echo -e " 1) ${GREEN}Dedicated Resources${NC} (CPU + RAM Hard Limit)"
     echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS, CPU + RAM)"
     echo -e " 3) ${PURPLE}System Default${NC} (Unlimited - Shows Full Host Resources)"
-    echo -e " 4) ${LIME}Default CPU + Dedicated RAM${NC} (Full CPU Power, Custom RAM Size)"
+    echo -e " 4) ${LIME}Default CPU + Dedicated RAM${NC} (Own RAM Size, Full CPU - like a real VPS)"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
     printf " Selection [1-4]: "
     read -r res_type
@@ -877,7 +899,7 @@ create_vm() {
         read -r RAM
         if [ -z "$RAM" ]; then RAM="2g"; fi
         RAM=$(echo "$RAM" | tr -d '[:space:]')
-        echo -e " ${LIME}>> Default CPU + Dedicated RAM: ${RAM} RAM, Full CPU Power.${NC}"
+        echo -e " ${LIME}>> VM will show its own RAM (${RAM}), full CPU power.${NC}"
         sleep 1
     else
         echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
@@ -1213,6 +1235,48 @@ create_vm() {
     mkdir -p "$DATA_DIR"
     docker rm -f "$VM_NAME" >/dev/null 2>&1
 
+    # ==========================================
+    # CUSTOM UPTIME
+    # ==========================================
+    clear
+    echo -e "${CYAN}┌──────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}UPTIME CONFIGURATION${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────┘${NC}"
+    printf " Do you need custom uptime? (y/n): "
+    read -r uptime_yes
+    uptime_yes="${uptime_yes//$'\r'/}"
+    uptime_yes="${uptime_yes,,}"
+    FAKE_UPTIME_SEC=""
+
+    if [[ "$uptime_yes" == "y" ]]; then
+        echo -e ""
+        echo -e " 1) ${GREEN}System Uptime${NC} (Show your main server's real uptime)"
+        echo -e " 2) ${CYAN}Custom Uptime${NC} (Set any uptime you want)"
+        echo -e ""
+        printf " Selection [1-2]: "
+        read -r uptime_type
+        uptime_type="${uptime_type//$'\r'/}"
+
+        if [ "$uptime_type" == "2" ]; then
+            echo -e ""
+            echo -e " ${DIM}Examples: 100d, 365d, 1y, 30d 12h, 1000d 5h 30m${NC}"
+            printf " Enter uptime: "
+            read -r uptime_input
+            FAKE_UPTIME_SEC=$(parse_uptime_to_seconds "$uptime_input")
+            if [ -z "$FAKE_UPTIME_SEC" ] || [ "$FAKE_UPTIME_SEC" -le 0 ] 2>/dev/null; then
+                FAKE_UPTIME_SEC="300"
+            fi
+            echo -e " ${GREEN}✔ Custom uptime set${NC}"
+        else
+            FAKE_UPTIME_SEC="SYSTEM"
+            echo -e " ${GREEN}✔ Will show system (real) uptime${NC}"
+        fi
+    else
+        FAKE_UPTIME_SEC="300"
+        echo -e " ${DIM}✔ Default uptime: 5 minutes${NC}"
+    fi
+    sleep 1
+
     echo -e " ${BLUE}▶${NC} Deploying container..."
 
     # ==========================================
@@ -1308,22 +1372,64 @@ create_vm() {
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
 
-        # 2. FIX UPTIME
-        cat << 'UPTIME_WRAP' > /tmp/uptime_wrap
+        # 2. CUSTOM UPTIME
+        # Save real uptime binary first
+        docker exec "$VM_NAME" bash -c "if [ -f /usr/bin/uptime ] && [ ! -f /usr/bin/uptime.real ]; then cp /usr/bin/uptime /usr/bin/uptime.real; fi" 2>/dev/null
+
+        # Build uptime wrapper based on user choice
+        if [ "$FAKE_UPTIME_SEC" == "SYSTEM" ]; then
+            # Pass through to real uptime (shows host uptime)
+            cat << 'UPTIME_SYS' > /tmp/uptime_wrap
+#!/bin/bash
+if [ -x /usr/bin/uptime.real ]; then
+    exec /usr/bin/uptime.real "$@"
+else
+    exec /usr/bin/uptime "$@"
+fi
+UPTIME_SYS
+        elif [ -n "$FAKE_UPTIME_SEC" ] && [ "$FAKE_UPTIME_SEC" != "SYSTEM" ]; then
+            # Fake uptime with configured seconds
+            cat > /tmp/uptime_wrap << UPTIMEFAKE
+#!/bin/bash
+FAKE_SEC="__UPTIME_SEC_PLACEHOLDER__"
+if [ "\$1" == "-p" ]; then
+    # neofetch format: "up X days, Y hours, Z minutes"
+    D=\$((FAKE_SEC/86400))
+    REM=\$((FAKE_SEC%86400))
+    H=\$((REM/3600))
+    M=\$(( (REM%3600)/60 ))
+    OUT="up "
+    [ "\$D" -gt 0 ] && OUT="\${OUT}\${D} days, "
+    [ "\$H" -gt 0 ] && OUT="\${OUT}\${H} hours, "
+    OUT="\${OUT}\${M} minutes"
+    echo "\$OUT"
+else
+    # Standard format: "up X days, H:M"
+    D=\$((FAKE_SEC/86400))
+    H=\$(( (FAKE_SEC%86400)/3600 ))
+    M=\$(( (FAKE_SEC%3600)/60 ))
+    echo "  \$(date +%H:%M:%S) up \${D} days, \${H}:\${M},  1 user,  load average: 0.08, 0.03, 0.01"
+fi
+UPTIMEFAKE
+            sed -i "s|__UPTIME_SEC_PLACEHOLDER__|${FAKE_UPTIME_SEC}|g" /tmp/uptime_wrap
+        else
+            # Real container uptime (fallback)
+            cat << 'UPTIME_REAL' > /tmp/uptime_wrap
 #!/bin/bash
 SEC=$(ps -p 1 -o etimes= | awk '{print $1}')
 if [ -z "$SEC" ]; then
-    /usr/bin/uptime
-    exit 0
+    if [ -x /usr/bin/uptime.real ]; then exec /usr/bin/uptime.real "$@"; else exec /usr/bin/uptime "$@"; fi
 fi
 D=$((SEC/86400))
 H=$(( (SEC%86400)/3600 ))
 M=$(( (SEC%3600)/60 ))
 echo "up ${D} days, ${H}:${M}"
-UPTIME_WRAP
+UPTIME_REAL
+        fi
+
         docker cp /tmp/uptime_wrap "$VM_NAME":/usr/local/bin/uptime
-        docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/uptime"
-        rm /tmp/uptime_wrap
+        docker exec "$VM_NAME" bash -c "chmod +x /usr/local/bin/uptime" 2>/dev/null
+        rm -f /tmp/uptime_wrap
 
         # 3. Install Packages (Docker CE, Python3, Node.js, Neofetch, etc.)
         if [ "$IS_FULL" = true ]; then
@@ -1353,7 +1459,8 @@ DOCKER_START
 
             echo -e " ${GREEN}✔ Docker CE + Python3 + Node.js + Neofetch installed!${NC}"
         else
-            echo -e " ${BLUE}∞${NC} Installing system packages (Alpine / minimal)..."
+            echo -e " ${BLUE}∞${NC} Installing system packages (Python3, Node.js, Neofetch, etc.)..."
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
             docker exec "$VM_NAME" $VM_SHELL -c "apk add --no-cache neofetch curl wget iproute2 pciutils python3 nodejs 2>/dev/null" 2>/dev/null
         fi
 
