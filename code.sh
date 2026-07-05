@@ -879,28 +879,18 @@ create_vm() {
     echo -e " 1) ${GREEN}Dedicated Resources${NC} (CPU + RAM Hard Limit)"
     echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS, CPU + RAM)"
     echo -e " 3) ${PURPLE}System Default${NC} (Unlimited - Shows Full Host Resources)"
-    echo -e " 4) ${LIME}Default CPU + Dedicated RAM${NC} (Own RAM Size, Full CPU - like a real VPS)"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    printf " Selection [1-4]: "
+    printf " Selection [1-3]: "
     read -r res_type
     res_type="${res_type//$'\r'/}"
 
     RAM=""
     CORES=""
     MODE="shared"
-    SPOOF_RAM=false
 
     if [ "$res_type" == "3" ]; then
         MODE="unlimited"
         echo -e " ${PURPLE}>> System Default Selected: Using full Host Power.${NC}"
-        sleep 1
-    elif [ "$res_type" == "4" ]; then
-        MODE="ram_dedicated"
-        echo -n " Enter Dedicated RAM (e.g. 1g, 4g, 8g): "
-        read -r RAM
-        if [ -z "$RAM" ]; then RAM="2g"; fi
-        RAM=$(echo "$RAM" | tr -d '[:space:]')
-        echo -e " ${LIME}>> VM will show its own RAM (${RAM}), full CPU power.${NC}"
         sleep 1
     else
         echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
@@ -1310,24 +1300,6 @@ create_vm() {
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
     elif [ "$MODE" == "shared" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM"
-    elif [ "$MODE" == "ram_dedicated" ]; then
-        CMD="$CMD --memory=$RAM --memory-swap=$RAM"
-        SPOOF_RAM=true
-    fi
-
-    # Parse RAM value to bytes for meminfo spoofing
-    SPOOF_RAM_KB=""
-    SPOOF_RAM_BYTES=""
-    if [ "$SPOOF_RAM" == "true" ] && [ -n "$RAM" ]; then
-        RAM_UPPER=$(echo "$RAM" | tr '[:lower:]' '[:upper:]')
-        if [[ "$RAM_UPPER" =~ ^([0-9]+)G$ ]]; then
-            SPOOF_RAM_KB=$(( ${BASH_REMATCH[1]} * 1024 * 1024 ))
-        elif [[ "$RAM_UPPER" =~ ^([0-9]+)M$ ]]; then
-            SPOOF_RAM_KB=$(( ${BASH_REMATCH[1]} * 1024 ))
-        elif [[ "$RAM_UPPER" =~ ^([0-9]+)$ ]]; then
-            SPOOF_RAM_KB=$(( ${BASH_REMATCH[1]} * 1024 * 1024 ))
-        fi
-        SPOOF_RAM_BYTES=$(( SPOOF_RAM_KB * 1024 ))
     fi
 
     if [ "$VM_TYPE" == "vds" ]; then
@@ -1459,136 +1431,48 @@ UPTIME_REAL
 
 
 
-        # 3. Install Packages (Docker CE, Python3, Node.js, Neofetch, etc.)
+        # 3. Install Packages (Neofetch + essentials first, Docker CE in background)
         if [ "$IS_FULL" = true ]; then
-            echo -e " ${BLUE}∞${NC} Installing full stack (Docker, Python3, Node.js, Neofetch)..."
-            # Base packages
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps cpu-checker pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
+            echo -e " ${BLUE}∞${NC} Installing packages (Neofetch, Python3, Node.js)..."
+            # Base packages - fast, non-blocking
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
 
-            # Docker CE
+            # Docker CE - installed in BACKGROUND so VM stays fast & responsive
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 & fi" 2>/dev/null
-
-            # Docker auto-start script
-            cat << 'DOCKER_START' > /tmp/start_docker.sh
+            docker exec "$VM_NAME" bash -c "cat > /tmp/install_docker_bg.sh << 'DINSEOF'
+#!/bin/bash
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg 2>/dev/null
+echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" > /etc/apt/sources.list.d/docker.list
+apt-get update -qq 2>/dev/null
+apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1
+systemctl enable docker >/dev/null 2>&1
+systemctl start docker >/dev/null 2>&1
+sleep 2
+if ! docker ps >/dev/null 2>&1; then
+    dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 &
+fi
+cat > /usr/local/bin/start_docker.sh << 'DSEOF'
 #!/bin/bash
 if ! docker ps >/dev/null 2>&1; then
     dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 &
 fi
-DOCKER_START
-            docker cp /tmp/start_docker.sh "$VM_NAME":/usr/local/bin/start_docker.sh 2>/dev/null
-            docker exec "$VM_NAME" bash -c "chmod +x /usr/local/bin/start_docker.sh" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "echo '/usr/local/bin/start_docker.sh' >> /etc/rc.local && chmod +x /etc/rc.local" 2>/dev/null
-            rm -f /tmp/start_docker.sh
+DSEOF
+chmod +x /usr/local/bin/start_docker.sh
+grep -q start_docker /etc/rc.local 2>/dev/null || echo '/usr/local/bin/start_docker.sh' >> /etc/rc.local
+chmod +x /etc/rc.local 2>/dev/null
+rm -f /tmp/install_docker_bg.sh
+DINSEOF
+chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
+            docker exec -d "$VM_NAME" bash -c "nohup /tmp/install_docker_bg.sh > /var/log/docker_install.log 2>&1 &" 2>/dev/null
 
-            echo -e " ${GREEN}✔ Docker CE + Python3 + Node.js + Neofetch installed!${NC}"
+            echo -e " ${GREEN}✔ Neofetch + Python3 + Node.js installed!${NC}"
+            echo -e " ${DIM}  Docker CE installing in background...${NC}"
         else
-            echo -e " ${BLUE}∞${NC} Installing system packages (Python3, Node.js, Neofetch, etc.)..."
+            echo -e " ${BLUE}∞${NC} Installing system packages..."
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
             docker exec "$VM_NAME" $VM_SHELL -c "apk add --no-cache neofetch curl wget iproute2 pciutils python3 nodejs 2>/dev/null" 2>/dev/null
-        fi
-
-        # 3b. Spoof RAM display for ram_dedicated mode
-        if [ "$SPOOF_RAM" == "true" ] && [ -n "$SPOOF_RAM_KB" ]; then
-            echo -e " ${BLUE}∞${NC} Spoofing RAM display to show ${RAM}..."
-
-            # Calculate realistic values
-            SPOOF_RAM_MB=$(( SPOOF_RAM_KB / 1024 ))
-            SPOOF_USED_MB=$(( SPOOF_RAM_MB * 25 / 100 ))
-            SPOOF_FREE_KB=$(( SPOOF_RAM_KB * 75 / 100 ))
-            SPOOF_AVAIL_KB=$(( SPOOF_RAM_KB * 70 / 100 ))
-            SPOOF_BUFFERS_KB=$(( SPOOF_RAM_KB * 10 / 100 ))
-            SPOOF_CACHED_KB=$(( SPOOF_RAM_KB * 20 / 100 ))
-
-            # 1) Override 'free' command to show spoofed RAM
-            cat > /tmp/_fake_free << 'FREEEOF'
-#!/bin/bash
-# Read spoofed values from config file
-MEMINFO_FILE="/tmp/.spoof_ram_config"
-if [ -f "$MEMINFO_FILE" ]; then
-    . "$MEMINFO_FILE"
-    if [ "$1" == "-h" ] || [ "$1" == "-human" ] || [ -z "$1" ]; then
-        TOTAL_GB=$(awk "BEGIN {printf \"%.0f\", $SPOOF_RAM_KB/1048576}")
-        USED_GB=$(awk "BEGIN {printf \"%.1f\", $SPOOF_RAM_KB*25/100/1048576}")
-        FREE_GB=$(awk "BEGIN {printf \"%.1f\", $SPOOF_RAM_KB*75/100/1048576}")
-        BUFF_GB=$(awk "BEGIN {printf \"%.1f\", $SPOOF_RAM_KB*10/100/1048576}")
-        CACHE_GB=$(awk "BEGIN {printf \"%.1f\", $SPOOF_RAM_KB*20/100/1048576}")
-        AVAIL_GB=$(awk "BEGIN {printf \"%.1f\", $SPOOF_RAM_KB*70/100/1048576}")
-        echo "               total        used        free      shared  buff/cache   available"
-        echo "Mem:           ${TOTAL_GB}Gi       ${USED_GB}Gi       ${FREE_GB}Gi       213Mi       ${BUFF_GB}Gi       ${AVAIL_GB}Gi"
-        echo "Swap:             0B          0B          0B"
-    elif [ "$1" == "-m" ]; then
-        TOTAL_MB=$(awk "BEGIN {printf \"%.0f\", $SPOOF_RAM_KB/1024}")
-        USED_MB=$((TOTAL_MB * 25 / 100))
-        FREE_MB=$((TOTAL_MB * 75 / 100))
-        echo "               total        used        free      shared  buff/cache   available"
-        echo "Mem:           ${TOTAL_MB}Mi       ${USED_MB}Mi       ${FREE_MB}Mi       213Mi       $((TOTAL_MB*10/100))Mi       $((TOTAL_MB*70/100))Mi"
-        echo "Swap:             0          0          0"
-    else
-        TOTAL_MB=$(awk "BEGIN {printf \"%.0f\", $SPOOF_RAM_KB/1024}")
-        USED_MB=$((TOTAL_MB * 25 / 100))
-        FREE_MB=$((TOTAL_MB * 75 / 100))
-        echo "               total        used        free      shared  buff/cache   available"
-        echo "Mem:        $((TOTAL_MB*1024))    $((USED_MB*1024))    $((FREE_MB*1024))      218112    $((TOTAL_MB*10/100*1024))    $((TOTAL_MB*70/100*1024))"
-        echo "Swap:           0          0          0"
-    fi
-else
-    # Fallback to real free
-    if [ -x /usr/bin/free.real ]; then
-        /usr/bin/free.real "$@"
-    elif [ -x /usr/bin/free ]; then
-        /usr/bin/free "$@"
-    fi
-fi
-FREEEOF
-
-            # Create the config file with actual values
-            cat > /tmp/_spoof_ram_config << CFGEOF
-SPOOF_RAM_KB="${SPOOF_RAM_KB}"
-CFGEOF
-
-            docker cp /tmp/_fake_free "$VM_NAME":/usr/local/bin/free
-            docker cp /tmp/_spoof_ram_config "$VM_NAME":/tmp/.spoof_ram_config
-            docker exec "$VM_NAME" bash -c "
-                chmod +x /usr/local/bin/free
-                # Move real free if it exists at /usr/bin/free
-                if [ -f /usr/bin/free ] && [ ! -f /usr/bin/free.real ]; then
-                    cp /usr/bin/free /usr/bin/free.real 2>/dev/null
-                fi
-                # Ensure /usr/local/bin is in PATH before /usr/bin
-                grep -q '/usr/local/bin' /etc/environment 2>/dev/null &&                     sed -i 's|PATH=|PATH=/usr/local/bin:|' /etc/environment 2>/dev/null
-                # Also set in profile
-                echo 'export PATH=/usr/local/bin:$PATH' > /etc/profile.d/spoof_path.sh 2>/dev/null
-                chmod +x /etc/profile.d/spoof_path.sh 2>/dev/null
-            " 2>/dev/null
-            rm -f /tmp/_fake_free /tmp/_spoof_ram_config
-
-            # 2) Override neofetch get_memory() function
-            cat > /tmp/_neofetch_mem << NFMEMEOF
-
-## TASIN_MEM_START ##
-get_memory() {
-    memory="__MEM_VAL_PLACEHOLDER__"
-}
-## TASIN_MEM_END ##
-NFMEMEOF
-            sed -i "s|__MEM_VAL_PLACEHOLDER__|${SPOOF_USED_MB}MiB / ${SPOOF_RAM_MB}MiB|g" /tmp/_neofetch_mem
-            docker cp /tmp/_neofetch_mem "$VM_NAME":/tmp/_neofetch_mem
-            docker exec "$VM_NAME" bash -c "
-                NEO=/usr/bin/neofetch
-                if [ -f "\$NEO" ] && [ -f /tmp/_neofetch_mem ]; then
-                    sed -i '/## TASIN_MEM_START ##/,/## TASIN_MEM_END ##/d' "\$NEO"
-                    cat /tmp/_neofetch_mem >> "\$NEO"
-                fi
-                rm -f /tmp/_neofetch_mem 2>/dev/null
-            " 2>/dev/null
-            rm -f /tmp/_neofetch_mem
-
-            echo -e " ${GREEN}✔ RAM spoofed: neofetch & free will show ${RAM} as container's own RAM${NC}"
         fi
 
         # 4. Apply Network Speed Limit
@@ -1713,41 +1597,31 @@ NFUPEOF
             rm -f /tmp/_neofetch_uptime
         fi
 
-        # Apply Model Name - reliable method using a dedicated override script
+        # Apply Model Name to neofetch
         if [ -n "$MODEL_NAME" ]; then
             docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
             docker cp "$DMI_PRODUCT_FILE" "$VM_NAME":/etc/tasin-spoof/product_name 2>/dev/null
             docker cp "$DMI_VENDOR_FILE" "$VM_NAME":/etc/tasin-spoof/sys_vendor 2>/dev/null
 
-            # Create a self-contained override script that patches neofetch safely
-            cat > /tmp/_apply_host.sh << HOSTAPPLYEOF
-#!/bin/bash
-NEO=/usr/bin/neofetch
-if [ ! -f "\$NEO" ]; then exit 0; fi
+            cat > /tmp/_neofetch_host << 'HOSTEOF'
 
-MODEL="__MODEL_PLACEHOLDER__"
-
-# Remove any previous TASIN host override (use unique markers)
-sed -i '/## TASIN_HOST_START ##/,/## TASIN_HOST_END ##/d' "\$NEO"
-
-# Append override with unique start/end markers (safe from false matches)
-cat >> "\$NEO" << 'TASINHOSTEOF'
 ## TASIN_HOST_START ##
 get_host() {
-    host="__HOST_VAL__"
+    host="__HOST_PLACEHOLDER__"
 }
 ## TASIN_HOST_END ##
-TASINHOSTEOF
-
-# Replace placeholder inside the appended block
-sed -i "s|__HOST_VAL__|${MODEL}|g" "\$NEO"
-HOSTAPPLYEOF
-            # Replace the outer placeholder
-            sed -i "s|__MODEL_PLACEHOLDER__|${MODEL_NAME}|g" /tmp/_apply_host.sh
-            docker cp /tmp/_apply_host.sh "$VM_NAME":/tmp/_apply_host.sh
-            docker exec "$VM_NAME" bash -c "chmod +x /tmp/_apply_host.sh && /tmp/_apply_host.sh" 2>/dev/null
-            docker exec "$VM_NAME" rm -f /tmp/_apply_host.sh 2>/dev/null
-            rm -f /tmp/_apply_host.sh
+HOSTEOF
+            sed -i "s|__HOST_PLACEHOLDER__|${MODEL_NAME}|g" /tmp/_neofetch_host
+            docker cp /tmp/_neofetch_host "$VM_NAME":/tmp/_neofetch_host
+            docker exec "$VM_NAME" bash -c "
+                NEO=/usr/bin/neofetch
+                if [ -f \"\$NEO\" ] && [ -f /tmp/_neofetch_host ]; then
+                    sed -i '/## TASIN_HOST_START ##/,/## TASIN_HOST_END ##/d' \"\$NEO\"
+                    cat /tmp/_neofetch_host >> \"\$NEO\"
+                fi
+                rm -f /tmp/_neofetch_host 2>/dev/null
+            " 2>/dev/null
+            rm -f /tmp/_neofetch_host
         fi
 
         # 6. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
@@ -1881,7 +1755,7 @@ LSHWEOF
             # --- Override neofetch get_gpu function (guaranteed detection) ---
             cat > /tmp/_neofetch_gpu << 'NFEOF'
 
-# TASIN: Override GPU detection
+## TASIN_GPU_START ##
 get_gpu() {
     gpu="__GPU_NAME_PLACEHOLDER__ [__GPU_VRAM_PLACEHOLDER__MB]"
     gpu_brand="NVIDIA"
@@ -1890,18 +1764,16 @@ get_gpu() {
 get_gpu_legacy() {
     :
 }
+## TASIN_GPU_END ##
 NFEOF
             sed -i "s|__GPU_NAME_PLACEHOLDER__|${GPU_SPOOF_NAME}|g" /tmp/_neofetch_gpu
             sed -i "s|__GPU_VRAM_PLACEHOLDER__|${GPU_SPOOF_VRAM}|g" /tmp/_neofetch_gpu
             docker cp /tmp/_neofetch_gpu "$VM_NAME":/tmp/_neofetch_gpu
             docker exec "$VM_NAME" bash -c "
-                if [ -f /usr/bin/neofetch ] && [ -f /tmp/_neofetch_gpu ]; then
-                    # Remove any previous TASIN GPU override (use unique markers)
-                    sed -i '/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d' /usr/bin/neofetch
-                    # Add unique markers to the override block before appending
-                    sed -i '1s|^|## TASIN_GPU_START ##\n|' /tmp/_neofetch_gpu
-                    echo '## TASIN_GPU_END ##' >> /tmp/_neofetch_gpu
-                    cat /tmp/_neofetch_gpu >> /usr/bin/neofetch
+                NEO=/usr/bin/neofetch
+                if [ -f \"\$NEO\" ] && [ -f /tmp/_neofetch_gpu ]; then
+                    sed -i '/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d' \"\$NEO\"
+                    cat /tmp/_neofetch_gpu >> \"\$NEO\"
                 fi
                 rm -f /tmp/_neofetch_gpu 2>/dev/null
             " 2>/dev/null
