@@ -610,6 +610,7 @@ manage_vm_menu() {
         echo -e "  7) ${PREMIUM}ℹ  Show VM Info${NC}           ${PREMIUM}PREMIUM++${NC}"
         echo -e "  8) ${PREMIUM}✎  Edit Configuration${NC}      ${PREMIUM}PREMIUM++${NC}"
         echo -e "  9) ${PREMIUM}■  Live Performance${NC}       ${PREMIUM}PREMIUM++${NC}"
+        echo -e " 10) ${CYAN}🔗 SSHX Web Link${NC}          Get browser SSH link"
         echo -e "  0) ⬅  Back to List"
         echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
         echo -n " Select Option: "
@@ -730,6 +731,36 @@ manage_vm_menu() {
             7) show_vm_info "$vm_name" ;;
             8) edit_vm_config "$vm_name" ;;
             9) live_vm_performance "$vm_name" ;;
+            10)
+                if [ "$(docker inspect -f '{{.State.Running}}' $vm_name 2>/dev/null)" != "true" ]; then
+                    echo -e " ${RED}✘ VM is not running. Start it first.${NC}"
+                    sleep 2
+                else
+                    echo -e " ${CYAN}Installing SSHX and generating link...${NC}"
+                    SSHX_OUT=$(docker exec "$vm_name" bash -c 'curl -sSf https://sshx.io/get 2>/dev/null | sh 2>/dev/null && sshx 2>/dev/null' 2>/dev/null)
+                    if [ -n "$SSHX_OUT" ] && echo "$SSHX_OUT" | grep -q "https\|sshx\|."; then
+                        SSHX_LINK=$(echo "$SSHX_OUT" | grep -oE 'https?://[^[:space:]]+' | head -1)
+                        if [ -z "$SSHX_LINK" ]; then
+                            SSHX_LINK=$(echo "$SSHX_OUT" | tail -1)
+                        fi
+                        echo ""
+                        echo -e " ${GREEN}✔ SSHX Web SSH Link:${NC}"
+                        echo -e " ${WHITE}${BOLD}  ${SSHX_LINK}${NC}"
+                        echo ""
+                        # Try to copy to clipboard via SSH
+                        echo "$SSHX_LINK" > "/root/scripts-tasin/sshx_${vm_name#tasin-vm-}.info"
+                    else
+                        echo -e " ${YELLOW}SSHX output:${NC}"
+                        echo "$SSHX_OUT"
+                        echo ""
+                        echo -e " ${DIM}If no link above, SSHX may need manual setup inside the VM.${NC}"
+                        echo -e " ${DIM}Run: curl -sSf https://sshx.io/get | sh && sshx${NC}"
+                    fi
+                    echo ""
+                    echo -n " Press Enter to continue... "
+                    read -r
+                fi
+                ;;
             0) return ;;
             *) ;;
         esac
@@ -1435,7 +1466,22 @@ UPTIME_REAL
         if [ "$IS_FULL" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing packages (Neofetch, Python3, Node.js)..."
             # Base packages - fast, non-blocking
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps pciutils python3 python3-pip nodejs npm software-properties-common gnupg2 >/dev/null 2>&1" 2>/dev/null
+
+            # Pre-configure container for MariaDB/MySQL (systemd services, sysctls)
+            docker exec "$VM_NAME" bash -c '
+                # MariaDB needs these sysctls
+                sysctl -w vm.swappiness=1 >/dev/null 2>&1
+                # Ensure systemd can manage database services
+                mkdir -p /etc/systemd/system/mariadb.service.d 2>/dev/null
+                mkdir -p /etc/systemd/system/mysql.service.d 2>/dev/null
+                # Create a pre-install setup so mariadb/mysql "just works" with systemctl
+                echo "[Service]
+LimitNOFILE=16384
+LimitNPROC=32768" > /etc/systemd/system/mariadb.service.d/limits.conf 2>/dev/null
+                cp /etc/systemd/system/mariadb.service.d/limits.conf /etc/systemd/system/mysql.service.d/limits.conf 2>/dev/null
+                systemctl daemon-reload >/dev/null 2>&1
+            ' 2>/dev/null
 
             # Docker CE - installed in BACKGROUND so VM stays fast & responsive
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json" 2>/dev/null
@@ -1576,52 +1622,46 @@ SLEOF
                 UP_STR="${UP_STR}${FAKE_H} hours, ${UP_M} mins"
             fi
 
-            cat > /tmp/_neofetch_uptime << NFUPEOF
-
-## TASIN_UPTIME_START ##
-get_uptime() {
-    uptime="__UPTIME_VAL__"
-}
-## TASIN_UPTIME_END ##
-NFUPEOF
-            sed -i "s|__UPTIME_VAL__|${UP_STR}|g" /tmp/_neofetch_uptime
-            docker cp /tmp/_neofetch_uptime "$VM_NAME":/tmp/_neofetch_uptime
-            docker exec "$VM_NAME" bash -c "
+            echo '## TASIN_UPTIME_START ##' > /tmp/_nf_uptime
+            echo 'get_uptime() {' >> /tmp/_nf_uptime
+            echo "    uptime=\"${UP_STR}\"" >> /tmp/_nf_uptime
+            echo '}' >> /tmp/_nf_uptime
+            echo '## TASIN_UPTIME_END ##' >> /tmp/_nf_uptime
+            docker cp /tmp/_nf_uptime "$VM_NAME":/tmp/_nf_uptime
+            docker exec "$VM_NAME" bash -c '
                 NEO=/usr/bin/neofetch
-                if [ -f \"\$NEO\" ] && [ -f /tmp/_neofetch_uptime ]; then
-                    sed -i '/## TASIN_UPTIME_START ##/,/## TASIN_UPTIME_END ##/d' \"\$NEO\"
-                    cat /tmp/_neofetch_uptime >> \"\$NEO\"
-                fi
-                rm -f /tmp/_neofetch_uptime 2>/dev/null
-            " 2>/dev/null
-            rm -f /tmp/_neofetch_uptime
+                [ ! -f "$NEO" ] && exit 0
+                [ ! -f /tmp/_nf_uptime ] && exit 0
+                sed -i "/## TASIN_UPTIME_START ##/,/## TASIN_UPTIME_END ##/d" "$NEO"
+                cat /tmp/_nf_uptime >> "$NEO"
+                rm -f /tmp/_nf_uptime
+            '
+            rm -f /tmp/_nf_uptime
         fi
 
-        # Apply Model Name to neofetch
+        # Apply Model Name to neofetch (bulletproof: echo + single-quote bash -c)
         if [ -n "$MODEL_NAME" ]; then
             docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
             docker cp "$DMI_PRODUCT_FILE" "$VM_NAME":/etc/tasin-spoof/product_name 2>/dev/null
             docker cp "$DMI_VENDOR_FILE" "$VM_NAME":/etc/tasin-spoof/sys_vendor 2>/dev/null
 
-            cat > /tmp/_neofetch_host << 'HOSTEOF'
-
-## TASIN_HOST_START ##
-get_host() {
-    host="__HOST_PLACEHOLDER__"
-}
-## TASIN_HOST_END ##
-HOSTEOF
-            sed -i "s|__HOST_PLACEHOLDER__|${MODEL_NAME}|g" /tmp/_neofetch_host
-            docker cp /tmp/_neofetch_host "$VM_NAME":/tmp/_neofetch_host
-            docker exec "$VM_NAME" bash -c "
+            # Build override file on HOST using echo (no heredoc escaping issues)
+            echo '## TASIN_HOST_START ##' > /tmp/_nf_host
+            echo 'get_host() {' >> /tmp/_nf_host
+            echo "    host=\"${MODEL_NAME}\"" >> /tmp/_nf_host
+            echo '}' >> /tmp/_nf_host
+            echo '## TASIN_HOST_END ##' >> /tmp/_nf_host
+            docker cp /tmp/_nf_host "$VM_NAME":/tmp/_nf_host
+            # Single-quoted bash -c: ZERO escaping issues inside
+            docker exec "$VM_NAME" bash -c '
                 NEO=/usr/bin/neofetch
-                if [ -f \"\$NEO\" ] && [ -f /tmp/_neofetch_host ]; then
-                    sed -i '/## TASIN_HOST_START ##/,/## TASIN_HOST_END ##/d' \"\$NEO\"
-                    cat /tmp/_neofetch_host >> \"\$NEO\"
-                fi
-                rm -f /tmp/_neofetch_host 2>/dev/null
-            " 2>/dev/null
-            rm -f /tmp/_neofetch_host
+                [ ! -f "$NEO" ] && exit 0
+                [ ! -f /tmp/_nf_host ] && exit 0
+                sed -i "/## TASIN_HOST_START ##/,/## TASIN_HOST_END ##/d" "$NEO"
+                cat /tmp/_nf_host >> "$NEO"
+                rm -f /tmp/_nf_host
+            '
+            rm -f /tmp/_nf_host
         fi
 
         # 6. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
@@ -1752,32 +1792,27 @@ LSHWEOF
 
             # --- Skip /sys/class/nvidia (Operation not permitted in unprivileged containers) ---
 
-            # --- Override neofetch get_gpu function (guaranteed detection) ---
-            cat > /tmp/_neofetch_gpu << 'NFEOF'
-
-## TASIN_GPU_START ##
-get_gpu() {
-    gpu="__GPU_NAME_PLACEHOLDER__ [__GPU_VRAM_PLACEHOLDER__MB]"
-    gpu_brand="NVIDIA"
-}
-
-get_gpu_legacy() {
-    :
-}
-## TASIN_GPU_END ##
-NFEOF
-            sed -i "s|__GPU_NAME_PLACEHOLDER__|${GPU_SPOOF_NAME}|g" /tmp/_neofetch_gpu
-            sed -i "s|__GPU_VRAM_PLACEHOLDER__|${GPU_SPOOF_VRAM}|g" /tmp/_neofetch_gpu
-            docker cp /tmp/_neofetch_gpu "$VM_NAME":/tmp/_neofetch_gpu
-            docker exec "$VM_NAME" bash -c "
+            # --- Override neofetch get_gpu function (bulletproof: echo + single-quote bash -c) ---
+            echo '## TASIN_GPU_START ##' > /tmp/_nf_gpu
+            echo 'get_gpu() {' >> /tmp/_nf_gpu
+            echo "    gpu=\"${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB]\"" >> /tmp/_nf_gpu
+            echo '    gpu_brand="NVIDIA"' >> /tmp/_nf_gpu
+            echo '}' >> /tmp/_nf_gpu
+            echo '' >> /tmp/_nf_gpu
+            echo 'get_gpu_legacy() {' >> /tmp/_nf_gpu
+            echo '    :' >> /tmp/_nf_gpu
+            echo '}' >> /tmp/_nf_gpu
+            echo '## TASIN_GPU_END ##' >> /tmp/_nf_gpu
+            docker cp /tmp/_nf_gpu "$VM_NAME":/tmp/_nf_gpu
+            docker exec "$VM_NAME" bash -c '
                 NEO=/usr/bin/neofetch
-                if [ -f \"\$NEO\" ] && [ -f /tmp/_neofetch_gpu ]; then
-                    sed -i '/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d' \"\$NEO\"
-                    cat /tmp/_neofetch_gpu >> \"\$NEO\"
-                fi
-                rm -f /tmp/_neofetch_gpu 2>/dev/null
-            " 2>/dev/null
-            rm -f /tmp/_neofetch_gpu
+                [ ! -f "$NEO" ] && exit 0
+                [ ! -f /tmp/_nf_gpu ] && exit 0
+                sed -i "/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d" "$NEO"
+                cat /tmp/_nf_gpu >> "$NEO"
+                rm -f /tmp/_nf_gpu
+            '
+            rm -f /tmp/_nf_gpu
 
             echo -e " ${GREEN}✔ GPU spoofed: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB)${NC}"
         fi
