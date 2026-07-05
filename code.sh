@@ -360,10 +360,10 @@ delete_all_vms() {
         docker network rm "net_${vm}" >/dev/null 2>&1
         docker rm -f "$vm" >/dev/null 2>&1
         rm -rf "/root/docker_data_${display_name}"
-        rm -f "/root/cpu_${display_name}.info"
-        rm -f "/root/dmi_product_${display_name}.info"
-        rm -f "/root/dmi_vendor_${display_name}.info"
-        rm -f "/root/vm_type_${display_name}.info"
+        rm -f "/root/scripts-tasin/cpu_${display_name}.info"
+        rm -f "/root/scripts-tasin/dmi_product_${display_name}.info"
+        rm -f "/root/scripts-tasin/dmi_vendor_${display_name}.info"
+        rm -f "/root/scripts-tasin/vm_type_${display_name}.info"
         log_msg "VM Deleted (revoke): $vm"
     done
     rm -f "$GITHUB_STATE_FILE"
@@ -442,10 +442,10 @@ sync_from_remote() {
                 docker network rm "net_${container_name}" >/dev/null 2>&1
                 docker rm -f "$container_name" >/dev/null 2>&1
                 rm -rf "/root/docker_data_${local_hostname}"
-                rm -f "/root/cpu_${local_hostname}.info"
-                rm -f "/root/dmi_product_${local_hostname}.info"
-                rm -f "/root/dmi_vendor_${local_hostname}.info"
-                rm -f "/root/vm_type_${local_hostname}.info"
+                rm -f "/root/scripts-tasin/cpu_${local_hostname}.info"
+                rm -f "/root/scripts-tasin/dmi_product_${local_hostname}.info"
+                rm -f "/root/scripts-tasin/dmi_vendor_${local_hostname}.info"
+                rm -f "/root/scripts-tasin/vm_type_${local_hostname}.info"
                 remove_local_state "$container_name"
                 continue
             fi
@@ -632,7 +632,7 @@ manage_vm_menu() {
             2)
                 docker restart $vm_name
                 # Re-apply speed limit if configured
-                SPEED_FILE="/root/speed_${vm_name#tasin-vm-}.info"
+                SPEED_FILE="/root/scripts-tasin/speed_${vm_name#tasin-vm-}.info"
                 if [ -f "$SPEED_FILE" ]; then
                     SAVED_SPEED=$(cat "$SPEED_FILE")
                     docker exec "$vm_name" bash -c "
@@ -660,7 +660,7 @@ manage_vm_menu() {
             4)
                 docker start $vm_name
                 # Re-apply speed limit if configured
-                SPEED_FILE="/root/speed_${vm_name#tasin-vm-}.info"
+                SPEED_FILE="/root/scripts-tasin/speed_${vm_name#tasin-vm-}.info"
                 if [ -f "$SPEED_FILE" ]; then
                     SAVED_SPEED=$(cat "$SPEED_FILE")
                     docker exec "$vm_name" bash -c "
@@ -685,15 +685,15 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
-                    OLD_TYPE=$(cat "/root/vm_type_${vm_name#tasin-vm-}.info" 2>/dev/null)
+                    OLD_TYPE=$(cat "/root/scripts-tasin/vm_type_${vm_name#tasin-vm-}.info" 2>/dev/null)
                     if [ -z "$OLD_TYPE" ]; then OLD_TYPE="vps"; fi
 
                     docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
-                    rm -f "/root/cpu_${vm_name#tasin-vm-}.info"
-                    rm -f "/root/dmi_product_${vm_name#tasin-vm-}.info"
-                    rm -f "/root/dmi_vendor_${vm_name#tasin-vm-}.info"
+                    rm -f "/root/scripts-tasin/cpu_${vm_name#tasin-vm-}.info"
+                    rm -f "/root/scripts-tasin/dmi_product_${vm_name#tasin-vm-}.info"
+                    rm -f "/root/scripts-tasin/dmi_vendor_${vm_name#tasin-vm-}.info"
                     remove_local_state "$vm_name"
                     log_msg "VM Wiped: $vm_name"
                     echo -e " ${GREEN}✔ VM Wiped.${NC} Sending to creation menu..."
@@ -711,13 +711,13 @@ manage_vm_menu() {
                     docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
                     rm -rf "/root/docker_data_${delete_hostname}"
-                    rm -f "/root/cpu_${delete_hostname}.info"
-                    rm -f "/root/dmi_product_${delete_hostname}.info"
-                    rm -f "/root/dmi_vendor_${delete_hostname}.info"
-                    rm -f "/root/vm_type_${delete_hostname}.info"
-                    rm -f "/root/gpu_name_${delete_hostname}.info"
-                    rm -f "/root/gpu_vram_${delete_hostname}.info"
-                    rm -f "/root/speed_${delete_hostname}.info"
+                    rm -f "/root/scripts-tasin/cpu_${delete_hostname}.info"
+                    rm -f "/root/scripts-tasin/dmi_product_${delete_hostname}.info"
+                    rm -f "/root/scripts-tasin/dmi_vendor_${delete_hostname}.info"
+                    rm -f "/root/scripts-tasin/vm_type_${delete_hostname}.info"
+                    rm -f "/root/scripts-tasin/gpu_name_${delete_hostname}.info"
+                    rm -f "/root/scripts-tasin/gpu_vram_${delete_hostname}.info"
+                    rm -f "/root/scripts-tasin/speed_${delete_hostname}.info"
                     remove_local_state "$vm_name"
                     remove_vm_from_remote "$delete_hostname"
 
@@ -766,10 +766,11 @@ create_vm() {
 
     VM_NAME="tasin-vm-$VM_ID_NAME"
     DATA_DIR="/root/docker_data_$VM_ID_NAME"
-    CPU_FILE="/root/cpu_$VM_ID_NAME.info"
-    DMI_PRODUCT_FILE="/root/dmi_product_$VM_ID_NAME.info"
-    DMI_VENDOR_FILE="/root/dmi_vendor_$VM_ID_NAME.info"
-    TYPE_FILE="/root/vm_type_$VM_ID_NAME.info"
+    mkdir -p "/root/scripts-tasin"
+    CPU_FILE="/root/scripts-tasin/cpu_$VM_ID_NAME.info"
+    DMI_PRODUCT_FILE="/root/scripts-tasin/dmi_product_$VM_ID_NAME.info"
+    DMI_VENDOR_FILE="/root/scripts-tasin/dmi_vendor_$VM_ID_NAME.info"
+    TYPE_FILE="/root/scripts-tasin/vm_type_$VM_ID_NAME.info"
 
     echo "$VM_TYPE" > "$TYPE_FILE"
 
@@ -780,6 +781,8 @@ create_vm() {
     echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}SELECT LINUX DISTRIBUTION${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " ${DIM}All VMs include: Systemctl, Docker, Python3, Node.js, Neofetch${NC}"
+    echo -e ""
     echo -e " ${YELLOW}Ubuntu Server Editions:${NC}"
     echo -e "   1) Ubuntu 22.04 LTS"
     echo -e "   2) Ubuntu 20.04 LTS"
@@ -792,16 +795,13 @@ create_vm() {
     echo -e ""
     echo -e " ${BLUE}Other:${NC}"
     echo -e "   7) Kali Linux"
-    echo -e "   8) Alpine Linux"
-    echo -e ""
-    echo -e " ${PURPLE}Pterodactyl / Full VM:${NC}"
-    echo -e "   9) Ubuntu 22.04 (Systemd + Docker Supported)"
+    echo -e "   8) Alpine Linux ${DIM}(OpenRC, limited features)${NC}"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Selection [1-9]: "
+    printf " Selection [1-8]: "
     read -r os_sel
 
     VM_SHELL="/bin/bash"
-    PTERO_MODE=false
+    IS_FULL=true
     case "$os_sel" in
         1) IMG="ubuntu:22.04" ;;
         2) IMG="ubuntu:20.04" ;;
@@ -810,8 +810,7 @@ create_vm() {
         5) IMG="debian:11" ;;
         6) IMG="debian:10" ;;
         7) IMG="kalilinux/kali-rolling:latest" ;;
-        8) IMG="alpine:latest"; VM_SHELL="/bin/sh" ;;
-        9) IMG="jrei/systemd-ubuntu:22.04"; PTERO_MODE=true ;;
+        8) IMG="alpine:latest"; VM_SHELL="/bin/sh"; IS_FULL=false ;;
         *) IMG="ubuntu:22.04" ;;
     esac
 
@@ -855,12 +854,14 @@ create_vm() {
         echo -e " Mode: ${GREEN}VPS (Software Virtualization, No KVM access)${NC}"
     fi
     echo -e ""
-    echo -e " 1) ${GREEN}Dedicated Resources${NC} (Hard Limit)"
-    echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS)"
-    echo -e " 3) ${PURPLE}System Default${NC} (Unlimited)"
+    echo -e " 1) ${GREEN}Dedicated Resources${NC} (CPU + RAM Hard Limit)"
+    echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS, CPU + RAM)"
+    echo -e " 3) ${PURPLE}System Default${NC} (Unlimited - Shows Full Host Resources)"
+    echo -e " 4) ${LIME}Default CPU + Dedicated RAM${NC} (Full CPU Power, Custom RAM Size)"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    echo -n " Selection [1-3]: "
+    printf " Selection [1-4]: "
     read -r res_type
+    res_type="${res_type//$'\r'/}"
 
     RAM=""
     CORES=""
@@ -869,6 +870,14 @@ create_vm() {
     if [ "$res_type" == "3" ]; then
         MODE="unlimited"
         echo -e " ${PURPLE}>> System Default Selected: Using full Host Power.${NC}"
+        sleep 1
+    elif [ "$res_type" == "4" ]; then
+        MODE="ram_dedicated"
+        echo -n " Enter Dedicated RAM (e.g. 1g, 4g, 8g): "
+        read -r RAM
+        if [ -z "$RAM" ]; then RAM="2g"; fi
+        RAM=$(echo "$RAM" | tr -d '[:space:]')
+        echo -e " ${LIME}>> Default CPU + Dedicated RAM: ${RAM} RAM, Full CPU Power.${NC}"
         sleep 1
     else
         echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
@@ -973,8 +982,8 @@ create_vm() {
         echo -e " ${GREEN}✔ GPU: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB / ${gpu_vram_gb}GB VRAM)${NC}"
 
         # Save GPU info for persistence
-        echo "$GPU_SPOOF_NAME" > "/root/gpu_name_${VM_ID_NAME}.info"
-        echo "$GPU_SPOOF_VRAM" > "/root/gpu_vram_${VM_ID_NAME}.info"
+        echo "$GPU_SPOOF_NAME" > "/root/scripts-tasin/gpu_name_${VM_ID_NAME}.info"
+        echo "$GPU_SPOOF_VRAM" > "/root/scripts-tasin/gpu_vram_${VM_ID_NAME}.info"
 
         # Physical GPU passthrough (only if host has real GPUs)
         if command -v nvidia-smi >/dev/null 2>&1; then
@@ -1221,7 +1230,8 @@ create_vm() {
         CMD="$CMD --runtime=nvidia"
     fi
 
-    if [ "$PTERO_MODE" = true ]; then
+    # Full VM mode: privileged + systemd support for all non-Alpine distros
+    if [ "$IS_FULL" = true ]; then
         CMD="$CMD --privileged --cgroupns=host --security-opt seccomp=unconfined --tmpfs /tmp --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
     fi
 
@@ -1229,6 +1239,8 @@ create_vm() {
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
     elif [ "$MODE" == "shared" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM"
+    elif [ "$MODE" == "ram_dedicated" ]; then
+        CMD="$CMD --memory=$RAM --memory-swap=$RAM"
     fi
 
     if [ "$VM_TYPE" == "vds" ]; then
@@ -1254,7 +1266,7 @@ create_vm() {
         CMD="$CMD -v $DMI_VENDOR_FILE:/etc/custom_sys_vendor:ro"
     fi
 
-    if [ "$PTERO_MODE" = true ]; then
+    if [ "$IS_FULL" = true ]; then
         CMD="$CMD $IMG /sbin/init"
     else
         CMD="$CMD $IMG $VM_SHELL"
@@ -1313,33 +1325,36 @@ UPTIME_WRAP
         docker exec "$VM_NAME" $VM_SHELL -c "chmod +x /usr/local/bin/uptime"
         rm /tmp/uptime_wrap
 
-        # 3. Install Packages + Apply Network Speed + GPU Spoof
-        if [ "$PTERO_MODE" = true ]; then
-            echo -e " ${BLUE}∞${NC} Installing Docker CE for Pterodactyl (Please wait, this takes a minute)..."
-            docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json"
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps cpu-checker pciutils >/dev/null 2>&1"
+        # 3. Install Packages (Docker CE, Python3, Node.js, Neofetch, etc.)
+        if [ "$IS_FULL" = true ]; then
+            echo -e " ${BLUE}∞${NC} Installing full stack (Docker, Python3, Node.js, Neofetch)..."
+            # Base packages
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps cpu-checker pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
 
-            docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg"
-            docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1"
-            docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1"
-            docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 & fi"
+            # Docker CE
+            docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "sleep 2 && if ! docker ps >/dev/null 2>&1; then dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 & fi" 2>/dev/null
 
+            # Docker auto-start script
             cat << 'DOCKER_START' > /tmp/start_docker.sh
 #!/bin/bash
 if ! docker ps >/dev/null 2>&1; then
     dockerd --storage-driver=vfs --iptables=false > /var/log/dockerd.log 2>&1 &
 fi
 DOCKER_START
-            docker cp /tmp/start_docker.sh "$VM_NAME":/usr/local/bin/start_docker.sh
-            docker exec "$VM_NAME" bash -c "chmod +x /usr/local/bin/start_docker.sh"
-            docker exec "$VM_NAME" bash -c "echo '/usr/local/bin/start_docker.sh' >> /etc/rc.local && chmod +x /etc/rc.local"
-            rm /tmp/start_docker.sh
+            docker cp /tmp/start_docker.sh "$VM_NAME":/usr/local/bin/start_docker.sh 2>/dev/null
+            docker exec "$VM_NAME" bash -c "chmod +x /usr/local/bin/start_docker.sh" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "echo '/usr/local/bin/start_docker.sh' >> /etc/rc.local && chmod +x /etc/rc.local" 2>/dev/null
+            rm -f /tmp/start_docker.sh
 
-            echo -e " ${GREEN}✔ Docker installed and started successfully inside VM!${NC}"
+            echo -e " ${GREEN}✔ Docker CE + Python3 + Node.js + Neofetch installed!${NC}"
         else
-            docker exec "$VM_NAME" $VM_SHELL -c "nohup bash -c 'apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps cpu-checker pciutils >/dev/null 2>&1 && apk add neofetch curl wget iproute2 pciutils >/dev/null 2>&1' >/dev/null 2>&1 &"
-
+            echo -e " ${BLUE}∞${NC} Installing system packages (Alpine / minimal)..."
+            docker exec "$VM_NAME" $VM_SHELL -c "apk add --no-cache neofetch curl wget iproute2 pciutils python3 nodejs 2>/dev/null" 2>/dev/null
         fi
 
         # 4. Apply Network Speed Limit
@@ -1385,8 +1400,8 @@ SPEEDLIMEOF
             # Add to profile.d (runs on every login / docker exec)
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/profile.d && echo '#!/bin/bash' > /etc/profile.d/speed_limit.sh && echo '/usr/local/bin/apply_speed_limit.sh >/dev/null 2>&1 &' >> /etc/profile.d/speed_limit.sh && chmod +x /etc/profile.d/speed_limit.sh"
 
-            # For systemd containers, create a one-shot service
-            if [ "$PTERO_MODE" = true ]; then
+            # For full VM containers, create a systemd one-shot service
+            if [ "$IS_FULL" = true ]; then
                 docker exec "$VM_NAME" bash -c "
                     cat > /etc/systemd/system/speed-limit.service << SLEOF
 [Unit]
@@ -1406,24 +1421,28 @@ SLEOF
             fi
 
             # Save speed config for re-apply on reboot from manage menu
-            echo "$NET_SPEED" > "/root/speed_${VM_ID_NAME}.info"
+            echo "$NET_SPEED" > "/root/scripts-tasin/speed_${VM_ID_NAME}.info"
             # Also save inside container for persistence script
             docker exec "$VM_NAME" bash -c "echo ${NET_SPEED} > /root/.speed_limit_value" 2>/dev/null
 
             echo -e " ${GREEN}✔ Speed limited to ${NET_SPEED}Mbps${NC}"
         fi
 
-        # 5. Wait for neofetch + Apply Model Name patches
+        # 5. Apply Model Name patches + GPU spoof
         echo -e " ${BLUE}∞${NC} Finalizing system configuration..."
-        for _wait in {1..30}; do
-            if docker exec "$VM_NAME" test -f /usr/bin/neofetch 2>/dev/null; then
-                break
-            fi
-            sleep 2
-        done
+        # Ensure neofetch is available (install if not present)
+        if ! docker exec "$VM_NAME" test -f /usr/bin/neofetch 2>/dev/null; then
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq neofetch pciutils >/dev/null 2>&1" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "apk add --no-cache neofetch pciutils 2>/dev/null" 2>/dev/null
+        fi
 
-        # Apply Model Name to neofetch (function override - bulletproof)
+        # Apply Model Name to neofetch + system files (function override - bulletproof)
         if [ -n "$MODEL_NAME" ]; then
+            # Also write to DMI-like files inside the container for system-info tools
+            docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
+            docker cp "$DMI_PRODUCT_FILE" "$VM_NAME":/etc/tasin-spoof/product_name 2>/dev/null
+            docker cp "$DMI_VENDOR_FILE" "$VM_NAME":/etc/tasin-spoof/sys_vendor 2>/dev/null
+
             cat > /tmp/_neofetch_host << 'HOSTEOF'
 # TASIN: Override Host/Model detection
 get_host() {
@@ -1433,11 +1452,11 @@ HOSTEOF
             sed -i "s|__MODEL_PLACEHOLDER__|${MODEL_NAME}|g" /tmp/_neofetch_host
             docker cp /tmp/_neofetch_host "$VM_NAME":/tmp/_neofetch_host
             docker exec "$VM_NAME" bash -c "
-                if [ -f /usr/bin/neofetch ]; then
+                if [ -f /usr/bin/neofetch ] && [ -f /tmp/_neofetch_host ]; then
                     sed -i '/# TASIN: Override Host/,/^}$/d' /usr/bin/neofetch
                     cat /tmp/_neofetch_host >> /usr/bin/neofetch
-                    rm -f /tmp/_neofetch_host
                 fi
+                rm -f /tmp/_neofetch_host 2>/dev/null
             " 2>/dev/null
             rm -f /tmp/_neofetch_host
         fi
@@ -1560,16 +1579,15 @@ LSHWEOF
             docker exec "$VM_NAME" chmod +x /usr/bin/lshw 2>/dev/null
             rm -f /tmp/_fake_lshw
 
-            # --- Fake /proc/driver/nvidia/gpus ---
-            docker exec "$VM_NAME" bash -c "mkdir -p /proc/driver/nvidia/gpus/0000:00:04.0"
-            docker exec "$VM_NAME" bash -c "echo 'Model: \t${GPU_SPOOF_NAME}' > /proc/driver/nvidia/gpus/0000:00:04.0/information"
-            docker exec "$VM_NAME" bash -c "echo 'IRQ:   \t147' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
-            docker exec "$VM_NAME" bash -c "echo 'GPU UUID: \tGPU-$(head -c 16 /dev/urandom | xxd -p)' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
-            docker exec "$VM_NAME" bash -c "echo 'Video BIOS: \t${GPU_SPOOF_NAME}' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
-            docker exec "$VM_NAME" bash -c "echo 'Bus Type: \tPCIe' >> /proc/driver/nvidia/gpus/0000:00:04.0/information"
+            # --- Skip /proc/driver/nvidia (read-only filesystem in containers) ---
+            # Create a fake information file in /etc/nvidia for tools that check it
+            docker exec "$VM_NAME" bash -c "echo 'Model: ${GPU_SPOOF_NAME}' > /etc/nvidia/gpu_info 2>/dev/null"
+            docker exec "$VM_NAME" bash -c "echo 'IRQ:   147' >> /etc/nvidia/gpu_info 2>/dev/null"
+            docker exec "$VM_NAME" bash -c "echo 'GPU UUID: GPU-$(head -c 16 /dev/urandom | od -A n -t x1 | tr -d ' ')' >> /etc/nvidia/gpu_info 2>/dev/null"
+            docker exec "$VM_NAME" bash -c "echo 'Video BIOS: ${GPU_SPOOF_NAME}' >> /etc/nvidia/gpu_info 2>/dev/null"
+            docker exec "$VM_NAME" bash -c "echo 'Bus Type: PCIe' >> /etc/nvidia/gpu_info 2>/dev/null"
 
-            # --- Fake /sys/class/nvidia capable ---
-            docker exec "$VM_NAME" bash -c "mkdir -p /sys/class/nvidia && echo '1' > /sys/class/nvidia/capable 2>/dev/null"
+            # --- Skip /sys/class/nvidia (Operation not permitted in unprivileged containers) ---
 
             # --- Override neofetch get_gpu function (guaranteed detection) ---
             cat > /tmp/_neofetch_gpu << 'NFEOF'
@@ -1588,13 +1606,13 @@ NFEOF
             sed -i "s|__GPU_VRAM_PLACEHOLDER__|${GPU_SPOOF_VRAM}|g" /tmp/_neofetch_gpu
             docker cp /tmp/_neofetch_gpu "$VM_NAME":/tmp/_neofetch_gpu
             docker exec "$VM_NAME" bash -c "
-                if [ -f /usr/bin/neofetch ]; then
+                if [ -f /usr/bin/neofetch ] && [ -f /tmp/_neofetch_gpu ]; then
                     # Remove any previous TASIN override
                     sed -i '/# TASIN: Override GPU detection/,/^}$/d' /usr/bin/neofetch
                     cat /tmp/_neofetch_gpu >> /usr/bin/neofetch
-                    rm -f /tmp/_neofetch_gpu
                 fi
-            "
+                rm -f /tmp/_neofetch_gpu 2>/dev/null
+            " 2>/dev/null
             rm -f /tmp/_neofetch_gpu
 
             echo -e " ${GREEN}✔ GPU spoofed: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB)${NC}"
@@ -1663,8 +1681,8 @@ show_vm_info() {
     echo -e "${CYAN}  │${NC}  ${WHITE}Created:${NC}        $created"
 
     local vm_type="VPS"
-    if [ -f "/root/vm_type_${display_name}.info" ]; then
-        vm_type=$(cat "/root/vm_type_${display_name}.info")
+    if [ -f "/root/scripts-tasin/vm_type_${display_name}.info" ]; then
+        vm_type=$(cat "/root/scripts-tasin/vm_type_${display_name}.info")
     fi
     if [ "$vm_type" == "vds" ]; then
         echo -e "${CYAN}  │${NC}  ${WHITE}Type:${NC}           ${PURPLE}VDS (KVM)${NC}"
@@ -1690,7 +1708,7 @@ show_vm_info() {
     local ip=$(get_vm_ip "$vm_name")
     echo -e "${CYAN}  │${NC}  ${WHITE}IP Address:${NC}     ${CYAN}${ip:-N/A}${NC}"
 
-    local speed_file="/root/speed_${display_name}.info"
+    local speed_file="/root/scripts-tasin/speed_${display_name}.info"
     if [ -f "$speed_file" ]; then
         local spd=$(cat "$speed_file")
         if [ "$spd" -ge 1000 ]; then
@@ -1702,12 +1720,12 @@ show_vm_info() {
         echo -e "${CYAN}  │${NC}  ${WHITE}Speed Limit:${NC}   ${DIM}Default (unlimited)${NC}"
     fi
 
-    local gpu_file="/root/gpu_name_${display_name}.info"
+    local gpu_file="/root/scripts-tasin/gpu_name_${display_name}.info"
     if [ -f "$gpu_file" ]; then
         local gpu_name_val=$(cat "$gpu_file")
         local gpu_vram=""
-        if [ -f "/root/gpu_vram_${display_name}.info" ]; then
-            gpu_vram=$(cat "/root/gpu_vram_${display_name}.info")
+        if [ -f "/root/scripts-tasin/gpu_vram_${display_name}.info" ]; then
+            gpu_vram=$(cat "/root/scripts-tasin/gpu_vram_${display_name}.info")
             local vram_gb=$((gpu_vram / 1024))
             echo -e "${CYAN}  │${NC}  ${WHITE}GPU:${NC}            ${CYAN}${gpu_name_val}${NC} ${DIM}[${gpu_vram}MB / ${vram_gb}GB]${NC}"
         else
@@ -1717,8 +1735,8 @@ show_vm_info() {
         echo -e "${CYAN}  │${NC}  ${WHITE}GPU:${NC}            ${DIM}None${NC}"
     fi
 
-    if [ -f "/root/dmi_product_${display_name}.info" ]; then
-        local model=$(cat "/root/dmi_product_${display_name}.info")
+    if [ -f "/root/scripts-tasin/dmi_product_${display_name}.info" ]; then
+        local model=$(cat "/root/scripts-tasin/dmi_product_${display_name}.info")
         echo -e "${CYAN}  │${NC}  ${WHITE}Model Name:${NC}    $model"
     fi
 
@@ -1769,7 +1787,7 @@ edit_vm_config() {
         echo -e "   RAM:    ${WHITE}${cur_mem_display}${NC}"
         echo -e "   CPU:    ${WHITE}${cur_cpu_display}${NC}"
 
-        local speed_file="/root/speed_${display_name}.info"
+        local speed_file="/root/scripts-tasin/speed_${display_name}.info"
         if [ -f "$speed_file" ]; then
             local spd=$(cat "$speed_file")
             if [ "$spd" -ge 1000 ]; then
@@ -1844,12 +1862,12 @@ edit_vm_config() {
                         tc qdisc add dev \$IFACE parent 1:10 handle 10: sfq perturb 10
                         echo '${new_speed}' > /root/.speed_limit_value
                     " 2>/dev/null
-                    echo "$new_speed" > "/root/speed_${display_name}.info"
+                    echo "$new_speed" > "/root/scripts-tasin/speed_${display_name}.info"
                     echo -e " ${GREEN}✔ Speed updated to ${new_speed}Mbps${NC}"
                     log_msg "Edit: $vm_name speed changed to ${new_speed}Mbps"
                 else
                     docker exec "$vm_name" bash -c "IFACE=\$(ip route 2>/dev/null | awk '/default/ {print \$5}' | head -1); [ -z "\$IFACE" ] && IFACE=eth0; tc qdisc del dev \$IFACE root 2>/dev/null" 2>/dev/null
-                    rm -f "/root/speed_${display_name}.info"
+                    rm -f "/root/scripts-tasin/speed_${display_name}.info"
                     docker exec "$vm_name" bash -c "rm -f /root/.speed_limit_value" 2>/dev/null
                     echo -e " ${GREEN}✔ Speed limit removed (unlimited)${NC}"
                     log_msg "Edit: $vm_name speed limit removed"
@@ -1974,7 +1992,7 @@ while true; do
             STATE=$(get_status "$vm")
             DISPLAY_NAME=${vm#tasin-vm-}
 
-            if [ -f "/root/vm_type_$DISPLAY_NAME.info" ] && [ "$(cat /root/vm_type_$DISPLAY_NAME.info)" == "vds" ]; then
+            if [ -f "/root/scripts-tasin/vm_type_$DISPLAY_NAME.info" ] && [ "$(cat /root/scripts-tasin/vm_type_$DISPLAY_NAME.info)" == "vds" ]; then
                 TYPE_TAG="${PURPLE}VDS${NC}   "
             else
                 TYPE_TAG="${GREEN}VPS${NC}   "
