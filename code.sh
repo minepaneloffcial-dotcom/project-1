@@ -1,7 +1,11 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.0 PREMIUM++
+#  TASIN VPS CONTROL PANEL v3.1 PREMIUM++
+#  Fixes: Dynamic uptime (starts 1m, grows naturally),
+#         Robust neofetch config (no syntax errors),
+#         Custom Host/BIOS model fix,
+#         Cooler manage GUI, faster VPS tuning
 # =====================================================
 
 # ==================================================
@@ -593,28 +597,87 @@ fix_docker() {
 
 manage_vm_menu() {
     local vm_name=$1
+    local display_name=${vm_name#tasin-vm-}
     while true; do
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "    MANAGING: ${WHITE}$vm_name${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
-        echo -e " Status: $(get_status $vm_name)"
-        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-        echo -e "  1) ${GREEN}⚡ Connect / Boot (SSH Shell)${NC}"
-        echo -e "  2) ${YELLOW}↺  Reboot Container${NC}"
-        echo -e "  3) ${WHITE}■  Stop Server${NC}"
-        echo -e "  4) ${WHITE}▶  Start Server${NC}"
-        echo -e "  5) ${RED}♻  Reinstall / Change OS (Wipe Data)${NC}"
-        echo -e "  6) ${RED}X  Delete VM${NC}"
-        echo -e "  ${DIM}──────────────────────────────────${NC}"
-        echo -e "  7) ${PREMIUM}ℹ  Show VM Info${NC}           ${PREMIUM}PREMIUM++${NC}"
-        echo -e "  8) ${PREMIUM}✎  Edit Configuration${NC}      ${PREMIUM}PREMIUM++${NC}"
-        echo -e "  9) ${PREMIUM}■  Live Performance${NC}       ${PREMIUM}PREMIUM++${NC}"
-        echo -e "  ${DIM}──────────────────────────────────${NC}"
-        echo -e " 10) ${CYAN}🔗 SSHX Web Link${NC}          Get browser SSH link"
-        echo -e "  0) ⬅  Back to List"
-        echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-        echo -n " Select Option: "
+        # ─── Gather live VM state for the dashboard ───
+        local is_running=$(docker inspect -f '{{.State.Running}}' "$vm_name" 2>/dev/null)
+        local vm_type_tag="${GREEN}VPS${NC}"
+        [ -f "/root/scripts-tasin/vm_type_${display_name}.info" ] && \
+            [ "$(cat /root/scripts-tasin/vm_type_${display_name}.info)" == "vds" ] && \
+            vm_type_tag="${PURPLE}VDS${NC}"
+
+        local status_badge
+        if [ "$is_running" == "true" ]; then
+            status_badge="${GREEN}● ONLINE${NC}"
+        else
+            status_badge="${RED}● OFFLINE${NC}"
+        fi
+
+        local vm_ip=$(get_vm_ip "$vm_name" 2>/dev/null)
+        [ -z "$vm_ip" ] && vm_ip="${DIM}—${NC}"
+
+        # Live mini-stats (only if running)
+        local mini_cpu="${DIM}—${NC}" mini_mem="${DIM}—${NC}" mini_up="${DIM}—${NC}"
+        if [ "$is_running" == "true" ]; then
+            local _stats=$(docker stats "$vm_name" --no-stream --format "{{.CPUPerc}}|{{.MemUsage}}" 2>/dev/null)
+            if [ -n "$_stats" ]; then
+                mini_cpu=$(echo "$_stats" | cut -d'|' -f1 | tr -d ' ')
+                local _mu=$(echo "$_stats" | cut -d'|' -f2)
+                mini_mem=$(echo "$_mu" | awk '{print $1}')
+            fi
+            # Try to fetch the VM's own uptime string (uses our dynamic wrapper)
+            local _up=$(docker exec "$vm_name" /usr/local/bin/uptime -p 2>/dev/null | head -1)
+            [ -n "$_up" ] && mini_up="${CYAN}$_up${NC}" || mini_up="${DIM}up 1 minute${NC}"
+        fi
+
+        # ════════════════════════════════════════════════════
+        #  PREMIUM HEADER (gradient-style with live status badge)
+        # ════════════════════════════════════════════════════
+        # Safe padding helper (never goes negative)
+        _pad() { local n=$(( $1 < 0 ? 0 : $1 )); printf '%*s' "$n" ''; }
+        local _name_pad=$(( 20 - ${#display_name} ))
+        local _ip_pad=$(( 42 - ${#vm_ip} ))
+
+        echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.1${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
+        echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${WHITE}IP:${NC} ${CYAN}${vm_ip}${NC}$(_pad $_ip_pad)${GOLD}║${NC}"
+        echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${GOLD}║${NC}  ${DIM}LIVE${NC}  CPU: ${LIME}${mini_cpu}${NC}   RAM: ${LIME}${mini_mem}${NC}   ${mini_up}        ${GOLD}║${NC}"
+        echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
+        echo -e ""
+
+        # ════════════════════════════════════════════════════
+        #  GROUPED MENU SECTIONS
+        # ════════════════════════════════════════════════════
+        echo -e "  ${BLUE}┌─${NC} ${BOLD}POWER CONTROL${NC} ${BLUE}──────────────────────────┐${NC}"
+        echo -e "  ${BLUE}│${NC}  ${GREEN}1)${NC} ${WHITE}⚡${NC}  Connect / Boot ${DIM}(SSH Shell)${NC}      ${BLUE}│${NC}"
+        echo -e "  ${BLUE}│${NC}  ${YELLOW}2)${NC} ${WHITE}↺${NC}  Reboot Container                ${BLUE}│${NC}"
+        echo -e "  ${BLUE}│${NC}  ${WHITE}3)${NC} ${WHITE}■${NC}  Stop Server                     ${BLUE}│${NC}"
+        echo -e "  ${BLUE}│${NC}  ${WHITE}4)${NC} ${WHITE}▶${NC}  Start Server                    ${BLUE}│${NC}"
+        echo -e "  ${BLUE}└────────────────────────────────────────┘${NC}"
+        echo -e ""
+        echo -e "  ${PURPLE}┌─${NC} ${BOLD}PREMIUM TOOLS${NC} ${PURPLE}────────────────────────┐${NC}"
+        echo -e "  ${PURPLE}│${NC}  ${PREMIUM}7)${NC} ${WHITE}ℹ${NC}  Show VM Info                   ${PURPLE}│${NC}"
+        echo -e "  ${PURPLE}│${NC}  ${PREMIUM}8)${NC} ${WHITE}✎${NC}  Edit Configuration             ${PURPLE}│${NC}"
+        echo -e "  ${PURPLE}│${NC}  ${PREMIUM}9)${NC} ${WHITE}■${NC}  Live Performance Monitor       ${PURPLE}│${NC}"
+        echo -e "  ${PURPLE}│${NC}  ${CYAN}10)${NC} ${WHITE}🔗${NC} SSHX Web SSH Link              ${PURPLE}│${NC}"
+        echo -e "  ${PURPLE}└────────────────────────────────────────┘${NC}"
+        echo -e ""
+        echo -e "  ${RED}┌─${NC} ${BOLD}DANGER ZONE${NC} ${RED}────────────────────────────┐${NC}"
+        echo -e "  ${RED}│${NC}  ${RED}5)${NC} ${WHITE}♻${NC}  Reinstall / Change OS ${RED}(wipe)${NC}     ${RED}│${NC}"
+        echo -e "  ${RED}│${NC}  ${RED}6)${NC} ${WHITE}✕${NC}  Delete VM ${RED}(permanent)${NC}            ${RED}│${NC}"
+        echo -e "  ${RED}└────────────────────────────────────────┘${NC}"
+        echo -e ""
+        echo -e "  ${DIM}┌────────────────────────────────────────┐${NC}"
+        echo -e "  ${DIM}│${NC}  ${YELLOW}0)${NC} ${WHITE}⬅${NC}  Back to VM List                 ${DIM}│${NC}"
+        echo -e "  ${DIM}└────────────────────────────────────────┘${NC}"
+        echo -e ""
+        echo -e "  ${GOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -ne "  ${BRIGHT_ORANGE}▶${NC} ${YELLOW}Select option${NC} ${DIM}[0-10]${NC}: "
         read -r action
 
         case "$action" in
@@ -789,6 +852,29 @@ parse_uptime_to_seconds() {
         total=$((input * 86400))
     fi
     echo "$total"
+}
+
+# Convert seconds → human readable (e.g. "1 minute", "2 hours 5 minutes", "3 days 1 hour")
+parse_seconds_to_human() {
+    local sec="$1"
+    [ -z "$sec" ] && sec=0
+    local d=$(( sec / 86400 ))
+    local rem=$(( sec % 86400 ))
+    local h=$(( rem / 3600 ))
+    local m=$(( (rem % 3600) / 60 ))
+    local out=""
+    if [ "$d" -gt 0 ]; then
+        [ "$d" -eq 1 ] && out="${d} day" || out="${d} days"
+    fi
+    if [ "$h" -gt 0 ]; then
+        [ -n "$out" ] && out="${out} "
+        [ "$h" -eq 1 ] && out="${out}${h} hour" || out="${out}${h} hours"
+    fi
+    if [ "$m" -gt 0 ] || [ -z "$out" ]; then
+        [ -n "$out" ] && out="${out} "
+        [ "$m" -eq 1 ] && out="${out}${m} minute" || out="${out}${m} minutes"
+    fi
+    echo "$out"
 }
 
 create_vm() {
@@ -1265,12 +1351,14 @@ create_vm() {
     docker rm -f "$VM_NAME" >/dev/null 2>&1
 
     # ==========================================
-    # CUSTOM UPTIME
+    # CUSTOM UPTIME (dynamic — starts at the value, then grows naturally)
     # ==========================================
     clear
     echo -e "${CYAN}┌──────────────────────────────────────────┐${NC}"
     echo -e "         ${WHITE}UPTIME CONFIGURATION${NC}"
     echo -e "${CYAN}└──────────────────────────────────────────┘${NC}"
+    echo -e " ${DIM}Uptime is dynamic: it starts at the chosen value and${NC}"
+    echo -e " ${DIM}keeps growing like a real VM as the container runs.${NC}"
     printf " Do you need custom uptime? (y/n): "
     read -r uptime_yes
     uptime_yes="${uptime_yes//$'\r'/}"
@@ -1280,7 +1368,7 @@ create_vm() {
     if [[ "$uptime_yes" == "y" ]]; then
         echo -e ""
         echo -e " 1) ${GREEN}System Uptime${NC} (Show your main server's real uptime)"
-        echo -e " 2) ${CYAN}Custom Uptime${NC} (Set any uptime you want)"
+        echo -e " 2) ${CYAN}Custom Start Uptime${NC} (Start at any value, then grow naturally)"
         echo -e ""
         printf " Selection [1-2]: "
         read -r uptime_type
@@ -1288,30 +1376,38 @@ create_vm() {
 
         if [ "$uptime_type" == "2" ]; then
             echo -e ""
-            echo -e " ${DIM}Examples: 100d, 365d, 1y, 30d 12h, 1000d 5h 30m${NC}"
-            printf " Enter uptime: "
+            echo -e " ${DIM}Examples: 1m, 5m, 30m, 1h, 100d, 365d, 1y, 30d 12h${NC}"
+            printf " Enter starting uptime: "
             read -r uptime_input
             FAKE_UPTIME_SEC=$(parse_uptime_to_seconds "$uptime_input")
             if [ -z "$FAKE_UPTIME_SEC" ] || [ "$FAKE_UPTIME_SEC" -le 0 ] 2>/dev/null; then
-                FAKE_UPTIME_SEC="300"
+                FAKE_UPTIME_SEC="60"
             fi
-            echo -e " ${GREEN}✔ Custom uptime set${NC}"
+            echo -e " ${GREEN}✔ Custom uptime set (starts at $(parse_seconds_to_human "$FAKE_UPTIME_SEC"), grows naturally)${NC}"
         else
             FAKE_UPTIME_SEC="SYSTEM"
             echo -e " ${GREEN}✔ Will show system (real) uptime${NC}"
         fi
     else
-        FAKE_UPTIME_SEC="300"
-        echo -e " ${DIM}✔ Default uptime: 5 minutes${NC}"
+        # Default: start at 1 minute, then grow naturally like a real VM
+        FAKE_UPTIME_SEC="60"
+        echo -e " ${DIM}✔ Default uptime: 1 minute (grows naturally like a real VM)${NC}"
     fi
     sleep 1
 
     echo -e " ${BLUE}▶${NC} Deploying container..."
 
     # ==========================================
-    # COMMAND CONSTRUCTION
+    # COMMAND CONSTRUCTION (v3.1: performance-tuned)
+    # Optimizations:
+    #   --init              → proper PID 1 / signal handling (no zombie processes, clean shutdown)
+    #   --cpu-shares=2048   → higher CPU priority than default containers (default=1024)
+    #   --blkio-weight=1000 → max disk I/O priority (default=500, max=1000)
+    #   --shm-size=256m     → larger /dev/shm (default 64M causes crashes for Redis/MariaDB/Node)
+    #   --pids-limit=-1     → unlimited processes (default may block forks under load)
+    #   --dns 1.1.1.1 8.8.8.8 → fast public DNS for snappy apt/git/curl
     # ==========================================
-    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cap-add=NET_ADMIN --dns 8.8.8.8 --dns 1.1.1.1 -v $DATA_DIR:/root:rw"
+    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --init --cpu-shares=2048 --blkio-weight=1000 --shm-size=256m --pids-limit=-1 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
 
     # GPU PASSTHROUGH (real device, only if user chose one)
     if [ -n "$GPU_DEVICE" ]; then
@@ -1402,11 +1498,10 @@ create_vm() {
         # 1. Set Root Password
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
 
-        # 2. CUSTOM UPTIME
-        # Save real uptime binary first
+        # 2. CUSTOM UPTIME (dynamic: starts at offset, grows naturally with container)
+        # Save real uptime binary first (for SYSTEM mode passthrough)
         docker exec "$VM_NAME" bash -c "if [ -f /usr/bin/uptime ] && [ ! -f /usr/bin/uptime.real ]; then cp /usr/bin/uptime /usr/bin/uptime.real; fi" 2>/dev/null
 
-        # Build uptime wrapper based on user choice
         if [ "$FAKE_UPTIME_SEC" == "SYSTEM" ]; then
             # Pass through to real uptime (shows host uptime)
             cat << 'UPTIME_SYS' > /tmp/uptime_wrap
@@ -1417,48 +1512,68 @@ else
     exec /usr/bin/uptime "$@"
 fi
 UPTIME_SYS
-        elif [ -n "$FAKE_UPTIME_SEC" ] && [ "$FAKE_UPTIME_SEC" != "SYSTEM" ]; then
-            # Fake uptime with configured seconds
-            cat > /tmp/uptime_wrap << UPTIMEFAKE
-#!/bin/bash
-FAKE_SEC="__UPTIME_SEC_PLACEHOLDER__"
-if [ "\$1" == "-p" ]; then
-    # neofetch format: "up X days, Y hours, Z minutes"
-    D=\$((FAKE_SEC/86400))
-    REM=\$((FAKE_SEC%86400))
-    H=\$((REM/3600))
-    M=\$(( (REM%3600)/60 ))
-    OUT="up "
-    [ "\$D" -gt 0 ] && OUT="\${OUT}\${D} days, "
-    [ "\$H" -gt 0 ] && OUT="\${OUT}\${H} hours, "
-    OUT="\${OUT}\${M} minutes"
-    echo "\$OUT"
-else
-    # Standard format: "up X days, H:M"
-    D=\$((FAKE_SEC/86400))
-    H=\$(( (FAKE_SEC%86400)/3600 ))
-    M=\$(( (FAKE_SEC%3600)/60 ))
-    echo "  \$(date +%H:%M:%S) up \${D} days, \${H}:\${M},  1 user,  load average: 0.08, 0.03, 0.01"
-fi
-UPTIMEFAKE
-            sed -i "s|__UPTIME_SEC_PLACEHOLDER__|${FAKE_UPTIME_SEC}|g" /tmp/uptime_wrap
         else
-            # Real container uptime (fallback)
-            cat << 'UPTIME_REAL' > /tmp/uptime_wrap
+            # Dynamic fake uptime: real container uptime + offset (starts at offset, grows naturally)
+            # Write the offset file inside the container so both the wrapper and neofetch read the same value
+            docker exec "$VM_NAME" bash -c "echo '${FAKE_UPTIME_SEC}' > /root/.fake_uptime_offset" 2>/dev/null
+
+            cat << 'UPTIME_DYN' > /tmp/uptime_wrap
 #!/bin/bash
-SEC=$(ps -p 1 -o etimes= | awk '{print $1}')
-if [ -z "$SEC" ]; then
-    if [ -x /usr/bin/uptime.real ]; then exec /usr/bin/uptime.real "$@"; else exec /usr/bin/uptime "$@"; fi
+# TASIN dynamic uptime - starts at offset, grows naturally like a real VM
+OFFSET=60
+if [ -f /root/.fake_uptime_offset ]; then
+    OFFSET=$(cat /root/.fake_uptime_offset 2>/dev/null | head -1 | tr -dc '0-9')
 fi
-D=$((SEC/86400))
-H=$(( (SEC%86400)/3600 ))
-M=$(( (SEC%3600)/60 ))
-echo "up ${D} days, ${H}:${M}"
-UPTIME_REAL
+[ -z "$OFFSET" ] && OFFSET=60
+
+# Real container uptime (PID 1 elapsed seconds)
+REAL_SEC=$(ps -p 1 -o etimes= 2>/dev/null | awk '{print $1}' | tr -dc '0-9')
+[ -z "$REAL_SEC" ] && REAL_SEC=0
+
+# Total fake uptime = real + offset
+TOTAL=$(( REAL_SEC + OFFSET ))
+
+if [ "$1" == "-p" ]; then
+    # neofetch pretty format: "up X days, Y hours, Z minutes"
+    D=$(( TOTAL / 86400 ))
+    REM=$(( TOTAL % 86400 ))
+    H=$(( REM / 3600 ))
+    M=$(( (REM % 3600) / 60 ))
+    OUT="up "
+    if [ "$D" -gt 0 ]; then
+        [ "$D" -eq 1 ] && OUT="${OUT}${D} day, " || OUT="${OUT}${D} days, "
+    fi
+    if [ "$H" -gt 0 ] || [ "$D" -gt 0 ]; then
+        if [ "$H" -eq 1 ]; then
+            OUT="${OUT}1 hour, "
+        else
+            OUT="${OUT}${H} hours, "
+        fi
+    fi
+    if [ "$M" -eq 1 ]; then
+        OUT="${OUT}1 minute"
+    else
+        OUT="${OUT}${M} minutes"
+    fi
+    echo "$OUT"
+else
+    # Standard uptime format: "  HH:MM:SS up D days, H:M,  1 user,  load average: ..."
+    D=$(( TOTAL / 86400 ))
+    H=$(( (TOTAL % 86400) / 3600 ))
+    M=$(( (TOTAL % 3600) / 60 ))
+    if [ "$D" -eq 1 ]; then
+        printf "  %s up %d day, %d:%02d,  1 user,  load average: 0.08, 0.03, 0.01\n" "$(date +%H:%M:%S)" "$D" "$H" "$M"
+    else
+        printf "  %s up %d days, %d:%02d,  1 user,  load average: 0.08, 0.03, 0.01\n" "$(date +%H:%M:%S)" "$D" "$H" "$M"
+    fi
+fi
+UPTIME_DYN
         fi
 
         docker cp /tmp/uptime_wrap "$VM_NAME":/usr/local/bin/uptime
         docker exec "$VM_NAME" bash -c "chmod +x /usr/local/bin/uptime" 2>/dev/null
+        # Ensure /usr/local/bin is in PATH so `uptime` resolves to our wrapper
+        docker exec "$VM_NAME" bash -c "grep -q 'usr/local/bin' /etc/profile 2>/dev/null || echo 'export PATH=/usr/local/bin:\$PATH' >> /etc/profile" 2>/dev/null
         rm -f /tmp/uptime_wrap
 
 
@@ -1552,6 +1667,41 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
             docker exec "$VM_NAME" $VM_SHELL -c "apk add --no-cache neofetch curl wget iproute2 pciutils python3 nodejs 2>/dev/null" 2>/dev/null
         fi
 
+        # 3.5 SYSTEMD PERFORMANCE TUNING (makes the VM feel faster & smoother)
+        # Disables background CPU hogs that compete with user workloads:
+        #   - apt-daily.timer / apt-daily-upgrade.timer → auto apt update/upgrade (steals CPU + disk)
+        #   - man-db.timer                              → rebuilds manpage index (CPU spike)
+        #   - motd-news.timer                           → fetches Ubuntu news on login (network stall)
+        # Also: lower swappiness, unlimited journal rate, faster DNS
+        if [ "$IS_FULL" = true ]; then
+            docker exec "$VM_NAME" bash -c '
+                # Disable background timers that steal CPU
+                systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null
+                systemctl disable man-db.timer 2>/dev/null
+                systemctl disable motd-news.timer 2>/dev/null
+                systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null
+                systemctl mask systemd-networkd-wait-online.service 2>/dev/null
+                # Stop them if already running
+                systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null
+                systemctl stop man-db.timer motd-news.timer 2>/dev/null
+
+                # Lower swappiness — prefer RAM over swap (faster)
+                echo "vm.swappiness=10" > /etc/sysctl.d/99-tasin-performance.conf
+                echo "vm.vfs_cache_pressure=50" >> /etc/sysctl.d/99-tasin-performance.conf
+                echo "net.core.default_qdisc=fq" >> /etc/sysctl.d/99-tasin-performance.conf 2>/dev/null
+                sysctl -p /etc/sysctl.d/99-tasin-performance.conf >/dev/null 2>&1
+
+                # Unlimited journal rate (prevents log throttling delays)
+                mkdir -p /etc/systemd/journald.conf.d
+                printf "[Journal]\nRateLimitInterval=0\nRateLimitBurst=0\nMaxLevelStore=warning\n" > /etc/systemd/journald.conf.d/tasin.conf
+
+                # Faster apt: parallel downloads, no install-recommends bloat
+                mkdir -p /etc/apt/apt.conf.d
+                printf "Acquire::Queue-Mode \\"host\\";\nAcquire::Languages \\"none\\";\nAPT::Install-Recommends \\"false\\";\nAPT::Install-Suggests \\"false\\";\nDpkg::Options {\\"--force-confdef\\";\\"--force-confold\\";};\n" > /etc/apt/apt.conf.d/99-tasin-fast
+            ' 2>/dev/null
+            log_msg "Performance tuning applied to $VM_NAME"
+        fi
+
         # 4. Apply Network Speed Limit
         if [ -n "$NET_SPEED" ]; then
             echo -e " ${BLUE}∞${NC} Applying network speed limit..."
@@ -1636,55 +1786,102 @@ SLEOF
         # neofetch sources ~/.config/neofetch/config.conf
         # AFTER defining all internal functions, so our
         # overrides here are guaranteed to take effect.
+        #
+        # v3.1: Rewritten to be ROBUST —
+        #   * get_host() reads from /etc/tasin-spoof/product_name (no escaping issues)
+        #   * get_uptime() is DYNAMIC (real container uptime + offset, grows naturally)
+        #   * Clean heredoc generation = no syntax errors
         # ========================================
-        # Build config on HOST, then docker cp into container
-        echo '# TASIN Neofetch Config - overrides get_host/get_uptime/get_gpu' > /tmp/_neofetch_conf
 
-        # --- Host / Model Name override ---
+        # --- Copy host/model name files into container (for get_host to read) ---
         if [ -n "$MODEL_NAME" ]; then
             docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
             docker cp "$DMI_PRODUCT_FILE" "$VM_NAME":/etc/tasin-spoof/product_name 2>/dev/null
             docker cp "$DMI_VENDOR_FILE" "$VM_NAME":/etc/tasin-spoof/sys_vendor 2>/dev/null
-
-            echo "get_host() {" >> /tmp/_neofetch_conf
-            echo "    host=\"${MODEL_NAME}\"" >> /tmp/_neofetch_conf
-            echo "}" >> /tmp/_neofetch_conf
         fi
 
-        # --- Uptime override ---
-        if [ -n "$FAKE_UPTIME_SEC" ]; then
-            if [ "$FAKE_UPTIME_SEC" == "SYSTEM" ]; then
-                HOST_UP_SEC=$(awk "BEGIN {printf \"%.0f\", $(cat /proc/uptime 2>/dev/null | awk '{print $1}')}")
-                [ -z "$HOST_UP_SEC" ] && HOST_UP_SEC="0"
-                UP_D=$((HOST_UP_SEC / 86400))
-                UP_REM=$((HOST_UP_SEC % 86400))
-                UP_H=$((UP_REM / 3600))
-                UP_M=$(( (UP_REM % 3600) / 60 ))
-                UP_STR="up "
-                [ "$UP_D" -gt 0 ] && UP_STR="${UP_STR}${UP_D} days, "
-                UP_STR="${UP_STR}${UP_H} hours, ${UP_M} mins"
-            else
-                FAKE_D=$((FAKE_UPTIME_SEC / 86400))
-                FAKE_REM=$((FAKE_UPTIME_SEC % 86400))
-                FAKE_H=$((FAKE_REM / 3600))
-                FAKE_M=$(( (FAKE_REM % 3600) / 60 ))
-                UP_STR="up "
-                [ "$FAKE_D" -gt 0 ] && UP_STR="${UP_STR}${FAKE_D} days, "
-                UP_STR="${UP_STR}${FAKE_H} hours, ${UP_M} mins"
-            fi
-
-            echo 'get_uptime() {' >> /tmp/_neofetch_conf
-            echo "    uptime=\"${UP_STR}\"" >> /tmp/_neofetch_conf
-            echo '}' >> /tmp/_neofetch_conf
+        # --- Determine uptime offset for the dynamic get_uptime() ---
+        # SYSTEM mode: use host's current uptime as offset (fake_uptime ≈ real host uptime, grows naturally)
+        # FAKE mode: use the user-specified seconds as offset (starts at value, grows naturally)
+        UPTIME_OFFSET="60"
+        if [ "$FAKE_UPTIME_SEC" == "SYSTEM" ]; then
+            UPTIME_OFFSET=$(awk 'BEGIN{printf "%.0f", '"$(cat /proc/uptime 2>/dev/null | awk '{print $1}')"'}' 2>/dev/null)
+            [ -z "$UPTIME_OFFSET" ] && UPTIME_OFFSET="60"
+        elif [ -n "$FAKE_UPTIME_SEC" ]; then
+            UPTIME_OFFSET="$FAKE_UPTIME_SEC"
         fi
+        # Ensure offset is purely numeric
+        UPTIME_OFFSET=$(echo "$UPTIME_OFFSET" | tr -dc '0-9')
+        [ -z "$UPTIME_OFFSET" ] && UPTIME_OFFSET="60"
 
-        # --- GPU override ---
+        # Write the offset file inside the container (read by both uptime wrapper AND neofetch)
+        docker exec "$VM_NAME" bash -c "echo '${UPTIME_OFFSET}' > /root/.fake_uptime_offset" 2>/dev/null
+
+        # --- Generate the neofetch config using a single heredoc (clean, valid bash) ---
+        # The get_host function reads from /etc/tasin-spoof/product_name (avoids escaping issues)
+        # The get_uptime function is DYNAMIC (computes real container uptime + offset on each run)
+        cat > /tmp/_neofetch_conf << 'NEOFETCH_CONF_EOF'
+# TASIN Neofetch Config v3.1 - Dynamic overrides
+# Auto-generated by TASIN VPS Control Panel
+# This file is valid bash — sourced by neofetch after its own functions are defined.
+
+# Override get_host: show custom BIOS/Model name from /etc/tasin-spoof/product_name
+get_host() {
+    if [ -f /etc/tasin-spoof/product_name ]; then
+        host="$(cat /etc/tasin-spoof/product_name 2>/dev/null | head -1 | tr -d '\r\n')"
+    fi
+    if [ -z "$host" ]; then
+        host="TASIN Virtual Server"
+    fi
+}
+
+# Override get_uptime: dynamic — real container uptime + offset (grows naturally like a real VM)
+get_uptime() {
+    local offset=60
+    if [ -f /root/.fake_uptime_offset ]; then
+        offset=$(cat /root/.fake_uptime_offset 2>/dev/null | head -1 | tr -dc '0-9')
+    fi
+    [ -z "$offset" ] && offset=60
+    local real_sec=$(ps -p 1 -o etimes= 2>/dev/null | awk '{print $1}' | tr -dc '0-9')
+    [ -z "$real_sec" ] && real_sec=0
+    local total=$(( real_sec + offset ))
+    local d=$(( total / 86400 ))
+    local rem=$(( total % 86400 ))
+    local h=$(( rem / 3600 ))
+    local m=$(( (rem % 3600) / 60 ))
+    uptime="up "
+    if [ "$d" -gt 0 ]; then
+        [ "$d" -eq 1 ] && uptime="${uptime}${d} day, " || uptime="${uptime}${d} days, "
+    fi
+    if [ "$h" -gt 0 ] || [ "$d" -gt 0 ]; then
+        if [ "$h" -eq 1 ]; then
+            uptime="${uptime}1 hour, "
+        else
+            uptime="${uptime}${h} hours, "
+        fi
+    fi
+    if [ "$m" -eq 1 ]; then
+        uptime="${uptime}1 minute"
+    else
+        uptime="${uptime}${m} minutes"
+    fi
+}
+NEOFETCH_CONF_EOF
+
+        # --- GPU override (appended only if GPU spoof is set) ---
         if [ -n "$GPU_SPOOF_NAME" ]; then
-            echo 'get_gpu() {' >> /tmp/_neofetch_conf
-            echo "    gpu=\"${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB]\"" >> /tmp/_neofetch_conf
-            echo '    gpu_brand="NVIDIA"' >> /tmp/_neofetch_conf
-            echo '}' >> /tmp/_neofetch_conf
-            echo 'get_gpu_legacy() { : }' >> /tmp/_neofetch_conf
+            # Escape special chars for safe embedding in a bash double-quoted string
+            local esc_gpu_name
+            esc_gpu_name=$(printf '%s' "$GPU_SPOOF_NAME" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g')
+            cat >> /tmp/_neofetch_conf << GPU_CONF_EOF
+
+# Override get_gpu: show spoofed NVIDIA GPU
+get_gpu() {
+    gpu="${esc_gpu_name} [${GPU_SPOOF_VRAM}MB]"
+    gpu_brand="NVIDIA"
+}
+get_gpu_legacy() { :; }
+GPU_CONF_EOF
         fi
 
         # Deploy config file into container at ~/.config/neofetch/config.conf
