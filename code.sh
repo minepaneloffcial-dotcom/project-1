@@ -610,6 +610,7 @@ manage_vm_menu() {
         echo -e "  7) ${PREMIUM}ℹ  Show VM Info${NC}           ${PREMIUM}PREMIUM++${NC}"
         echo -e "  8) ${PREMIUM}✎  Edit Configuration${NC}      ${PREMIUM}PREMIUM++${NC}"
         echo -e "  9) ${PREMIUM}■  Live Performance${NC}       ${PREMIUM}PREMIUM++${NC}"
+        echo -e "  ${DIM}──────────────────────────────────${NC}"
         echo -e " 10) ${CYAN}🔗 SSHX Web Link${NC}          Get browser SSH link"
         echo -e "  0) ⬅  Back to List"
         echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
@@ -1310,7 +1311,7 @@ create_vm() {
     # ==========================================
     # COMMAND CONSTRUCTION
     # ==========================================
-    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cap-add=NET_ADMIN -v $DATA_DIR:/root:rw"
+    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cap-add=NET_ADMIN --dns 8.8.8.8 --dns 1.1.1.1 -v $DATA_DIR:/root:rw"
 
     # GPU PASSTHROUGH (real device, only if user chose one)
     if [ -n "$GPU_DEVICE" ]; then
@@ -1483,6 +1484,36 @@ LimitNPROC=32768" > /etc/systemd/system/mariadb.service.d/limits.conf 2>/dev/nul
                 systemctl daemon-reload >/dev/null 2>&1
             ' 2>/dev/null
 
+            # Pre-install MariaDB, MySQL, and PHP 8.3-FPM for Pterodactyl panels (in background)
+            docker exec "$VM_NAME" bash -c "cat > /tmp/install_ptero_deps.sh << 'PTDEOF'
+#!/bin/bash
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq 2>/dev/null
+
+# Install MariaDB and MySQL client
+apt-get install -y -qq mariadb-server mariadb-client mysql-client >/dev/null 2>&1
+
+# Install PHP 8.3-FPM and common extensions for Pterodactyl
+apt-get install -y -qq software-properties-common gnupg2 >/dev/null 2>&1
+add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1
+apt-get update -qq 2>/dev/null
+apt-get install -y -qq php8.3-fpm php8.3-cli php8.3-common php8.3-mbstring php8.3-xml php8.3-mysql php8.3-curl php8.3-zip php8.3-gd php8.3-intl php8.3-bcmath php8.3-redis >/dev/null 2>&1
+
+# Enable and start database services
+systemctl enable mariadb >/dev/null 2>&1
+systemctl enable mysql >/dev/null 2>&1
+systemctl start mariadb >/dev/null 2>&1
+systemctl start mysql >/dev/null 2>&1
+
+# Enable and start PHP-FPM
+systemctl enable php8.3-fpm >/dev/null 2>&1
+systemctl start php8.3-fpm >/dev/null 2>&1
+
+rm -f /tmp/install_ptero_deps.sh
+PTDEOF
+chmod +x /tmp/install_ptero_deps.sh" 2>/dev/null
+            docker exec -d "$VM_NAME" bash -c "nohup /tmp/install_ptero_deps.sh > /var/log/ptero_deps_install.log 2>&1 &" 2>/dev/null
+
             # Docker CE - installed in BACKGROUND so VM stays fast & responsive
             docker exec "$VM_NAME" bash -c "mkdir -p /etc/docker && echo '{\"storage-driver\": \"vfs\", \"iptables\": false}' > /etc/docker/daemon.json" 2>/dev/null
             docker exec "$VM_NAME" bash -c "cat > /tmp/install_docker_bg.sh << 'DINSEOF'
@@ -1514,7 +1545,7 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
             docker exec -d "$VM_NAME" bash -c "nohup /tmp/install_docker_bg.sh > /var/log/docker_install.log 2>&1 &" 2>/dev/null
 
             echo -e " ${GREEN}✔ Neofetch + Python3 + Node.js installed!${NC}"
-            echo -e " ${DIM}  Docker CE installing in background...${NC}"
+            echo -e " ${DIM}  Docker CE + MariaDB + PHP 8.3-FPM installing in background...${NC}"
         else
             echo -e " ${BLUE}∞${NC} Installing system packages..."
             docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
@@ -1592,7 +1623,7 @@ SLEOF
             echo -e " ${GREEN}✔ Speed limited to ${NET_SPEED}Mbps${NC}"
         fi
 
-        # 5. Apply Model Name patches + GPU spoof
+        # 5. Apply Neofetch Config + Model Name patches + GPU spoof
         echo -e " ${BLUE}∞${NC} Finalizing system configuration..."
         # Ensure neofetch is available (install if not present)
         if ! docker exec "$VM_NAME" test -f /usr/bin/neofetch 2>/dev/null; then
@@ -1600,7 +1631,27 @@ SLEOF
             docker exec "$VM_NAME" bash -c "apk add --no-cache neofetch pciutils 2>/dev/null" 2>/dev/null
         fi
 
-        # 2b. Override neofetch get_uptime() for uptime spoof (must be after neofetch install)
+        # ========================================
+        # NEOFETCH CONFIG FILE (official override method)
+        # neofetch sources ~/.config/neofetch/config.conf
+        # AFTER defining all internal functions, so our
+        # overrides here are guaranteed to take effect.
+        # ========================================
+        # Build config on HOST, then docker cp into container
+        echo '# TASIN Neofetch Config - overrides get_host/get_uptime/get_gpu' > /tmp/_neofetch_conf
+
+        # --- Host / Model Name override ---
+        if [ -n "$MODEL_NAME" ]; then
+            docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
+            docker cp "$DMI_PRODUCT_FILE" "$VM_NAME":/etc/tasin-spoof/product_name 2>/dev/null
+            docker cp "$DMI_VENDOR_FILE" "$VM_NAME":/etc/tasin-spoof/sys_vendor 2>/dev/null
+
+            echo "get_host() {" >> /tmp/_neofetch_conf
+            echo "    host=\"${MODEL_NAME}\"" >> /tmp/_neofetch_conf
+            echo "}" >> /tmp/_neofetch_conf
+        fi
+
+        # --- Uptime override ---
         if [ -n "$FAKE_UPTIME_SEC" ]; then
             if [ "$FAKE_UPTIME_SEC" == "SYSTEM" ]; then
                 HOST_UP_SEC=$(awk "BEGIN {printf \"%.0f\", $(cat /proc/uptime 2>/dev/null | awk '{print $1}')}")
@@ -1622,47 +1673,34 @@ SLEOF
                 UP_STR="${UP_STR}${FAKE_H} hours, ${UP_M} mins"
             fi
 
-            echo '## TASIN_UPTIME_START ##' > /tmp/_nf_uptime
-            echo 'get_uptime() {' >> /tmp/_nf_uptime
-            echo "    uptime=\"${UP_STR}\"" >> /tmp/_nf_uptime
-            echo '}' >> /tmp/_nf_uptime
-            echo '## TASIN_UPTIME_END ##' >> /tmp/_nf_uptime
-            docker cp /tmp/_nf_uptime "$VM_NAME":/tmp/_nf_uptime
-            docker exec "$VM_NAME" bash -c '
-                NEO=/usr/bin/neofetch
-                [ ! -f "$NEO" ] && exit 0
-                [ ! -f /tmp/_nf_uptime ] && exit 0
-                sed -i "/## TASIN_UPTIME_START ##/,/## TASIN_UPTIME_END ##/d" "$NEO"
-                cat /tmp/_nf_uptime >> "$NEO"
-                rm -f /tmp/_nf_uptime
-            '
-            rm -f /tmp/_nf_uptime
+            echo 'get_uptime() {' >> /tmp/_neofetch_conf
+            echo "    uptime=\"${UP_STR}\"" >> /tmp/_neofetch_conf
+            echo '}' >> /tmp/_neofetch_conf
         fi
 
-        # Apply Model Name to neofetch (bulletproof: echo + single-quote bash -c)
-        if [ -n "$MODEL_NAME" ]; then
-            docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
-            docker cp "$DMI_PRODUCT_FILE" "$VM_NAME":/etc/tasin-spoof/product_name 2>/dev/null
-            docker cp "$DMI_VENDOR_FILE" "$VM_NAME":/etc/tasin-spoof/sys_vendor 2>/dev/null
-
-            # Build override file on HOST using echo (no heredoc escaping issues)
-            echo '## TASIN_HOST_START ##' > /tmp/_nf_host
-            echo 'get_host() {' >> /tmp/_nf_host
-            echo "    host=\"${MODEL_NAME}\"" >> /tmp/_nf_host
-            echo '}' >> /tmp/_nf_host
-            echo '## TASIN_HOST_END ##' >> /tmp/_nf_host
-            docker cp /tmp/_nf_host "$VM_NAME":/tmp/_nf_host
-            # Single-quoted bash -c: ZERO escaping issues inside
-            docker exec "$VM_NAME" bash -c '
-                NEO=/usr/bin/neofetch
-                [ ! -f "$NEO" ] && exit 0
-                [ ! -f /tmp/_nf_host ] && exit 0
-                sed -i "/## TASIN_HOST_START ##/,/## TASIN_HOST_END ##/d" "$NEO"
-                cat /tmp/_nf_host >> "$NEO"
-                rm -f /tmp/_nf_host
-            '
-            rm -f /tmp/_nf_host
+        # --- GPU override ---
+        if [ -n "$GPU_SPOOF_NAME" ]; then
+            echo 'get_gpu() {' >> /tmp/_neofetch_conf
+            echo "    gpu=\"${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB]\"" >> /tmp/_neofetch_conf
+            echo '    gpu_brand="NVIDIA"' >> /tmp/_neofetch_conf
+            echo '}' >> /tmp/_neofetch_conf
+            echo 'get_gpu_legacy() { : }' >> /tmp/_neofetch_conf
         fi
+
+        # Deploy config file into container at ~/.config/neofetch/config.conf
+        docker exec "$VM_NAME" mkdir -p /root/.config/neofetch 2>/dev/null
+        docker cp /tmp/_neofetch_conf "$VM_NAME":/root/.config/neofetch/config.conf
+        docker exec "$VM_NAME" chmod 644 /root/.config/neofetch/config.conf 2>/dev/null
+        rm -f /tmp/_neofetch_conf
+
+        # Clean up any old TASIN patches from /usr/bin/neofetch (from previous VM versions)
+        docker exec "$VM_NAME" bash -c '
+            NEO=/usr/bin/neofetch
+            [ ! -f "$NEO" ] && exit 0
+            sed -i "/## TASIN_HOST_START ##/,/## TASIN_HOST_END ##/d" "$NEO" 2>/dev/null
+            sed -i "/## TASIN_UPTIME_START ##/,/## TASIN_UPTIME_END ##/d" "$NEO" 2>/dev/null
+            sed -i "/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d" "$NEO" 2>/dev/null
+        ' 2>/dev/null
 
         # 6. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
         if [ -n "$GPU_SPOOF_NAME" ]; then
@@ -1791,28 +1829,7 @@ LSHWEOF
             docker exec "$VM_NAME" bash -c "echo 'Bus Type: PCIe' >> /etc/nvidia/gpu_info 2>/dev/null"
 
             # --- Skip /sys/class/nvidia (Operation not permitted in unprivileged containers) ---
-
-            # --- Override neofetch get_gpu function (bulletproof: echo + single-quote bash -c) ---
-            echo '## TASIN_GPU_START ##' > /tmp/_nf_gpu
-            echo 'get_gpu() {' >> /tmp/_nf_gpu
-            echo "    gpu=\"${GPU_SPOOF_NAME} [${GPU_SPOOF_VRAM}MB]\"" >> /tmp/_nf_gpu
-            echo '    gpu_brand="NVIDIA"' >> /tmp/_nf_gpu
-            echo '}' >> /tmp/_nf_gpu
-            echo '' >> /tmp/_nf_gpu
-            echo 'get_gpu_legacy() {' >> /tmp/_nf_gpu
-            echo '    :' >> /tmp/_nf_gpu
-            echo '}' >> /tmp/_nf_gpu
-            echo '## TASIN_GPU_END ##' >> /tmp/_nf_gpu
-            docker cp /tmp/_nf_gpu "$VM_NAME":/tmp/_nf_gpu
-            docker exec "$VM_NAME" bash -c '
-                NEO=/usr/bin/neofetch
-                [ ! -f "$NEO" ] && exit 0
-                [ ! -f /tmp/_nf_gpu ] && exit 0
-                sed -i "/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d" "$NEO"
-                cat /tmp/_nf_gpu >> "$NEO"
-                rm -f /tmp/_nf_gpu
-            '
-            rm -f /tmp/_nf_gpu
+            # --- GPU neofetch override is handled in config.conf above ---
 
             echo -e " ${GREEN}✔ GPU spoofed: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB)${NC}"
         fi
