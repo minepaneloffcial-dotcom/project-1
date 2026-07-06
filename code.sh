@@ -1,11 +1,14 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.1 PREMIUM++
+#  TASIN VPS CONTROL PANEL v3.2 PREMIUM++
 #  Fixes: Dynamic uptime (starts 1m, grows naturally),
 #         Robust neofetch config (no syntax errors),
 #         Custom Host/BIOS model fix,
-#         Cooler manage GUI, faster VPS tuning
+#         Cooler manage GUI, faster VPS tuning,
+#         Hidden secret directory (.tasin/) + per-VM subdirs,
+#         Fake lscpu wrapper (fixes glitched lscpu),
+#         Custom CPU Intel fix (CRLF stripping)
 # =====================================================
 
 # ==================================================
@@ -45,10 +48,37 @@ draw_separator() {
 # ==================================================
 #       LOG FILE SETUP
 # ==================================================
-LOG_FILE="/root/vm_manager.log"
+# All TASIN internal files are hidden inside /root/.tasin/ so that
+# `ls /root` inside the VPS (and on the host) stays clean.
+# Structure:
+#   /root/.tasin/                  — secret base (hidden, starts with .)
+#     vm_manager.log               — panel log
+#     state                        — VM state file (GITHUB_STATE_FILE)
+#     license_cache                — license cache
+#     data/<vm_name>/              — bind-mount source for each VM's /root
+#     vms/<vm_name>/cpu.info       — per-VM spoofed cpuinfo
+#     vms/<vm_name>/dmi_product.info
+#     vms/<vm_name>/dmi_vendor.info
+#     vms/<vm_name>/vm_type.info
+#     vms/<vm_name>/gpu_name.info
+#     vms/<vm_name>/gpu_vram.info
+#     vms/<vm_name>/speed.info
+#     vms/<vm_name>/sshx.info
+TASIN_BASE="/root/.tasin"
+TASIN_DATA="$TASIN_BASE/data"
+TASIN_VMS="$TASIN_BASE/vms"
+LOG_FILE="$TASIN_BASE/vm_manager.log"
+
+mkdir -p "$TASIN_BASE" "$TASIN_DATA" "$TASIN_VMS" 2>/dev/null
 
 log_msg() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+# Helper: get per-VM info directory
+#   $1 = VM display name (e.g. "ryzen")
+vm_info_dir() {
+    echo "$TASIN_VMS/$1"
 }
 
 # ==================================================
@@ -61,8 +91,8 @@ _B='main'
 _F='users-data'
 _SI=60
 
-GITHUB_STATE_FILE="/root/.vm_remote_state"
-GITHUB_LICENSE_CACHE="/root/.vm_license_cache"
+GITHUB_STATE_FILE="$TASIN_BASE/state"
+GITHUB_LICENSE_CACHE="$TASIN_BASE/license_cache"
 SYNC_DAEMON_PID=""
 CURRENT_LICENSE=""
 
@@ -363,11 +393,11 @@ delete_all_vms() {
         local display_name=${vm#tasin-vm-}
         docker network rm "net_${vm}" >/dev/null 2>&1
         docker rm -f "$vm" >/dev/null 2>&1
-        rm -rf "/root/docker_data_${display_name}"
-        rm -f "/root/scripts-tasin/cpu_${display_name}.info"
-        rm -f "/root/scripts-tasin/dmi_product_${display_name}.info"
-        rm -f "/root/scripts-tasin/dmi_vendor_${display_name}.info"
-        rm -f "/root/scripts-tasin/vm_type_${display_name}.info"
+        rm -rf "/root/.tasin/data/${display_name}"
+        rm -f "/root/.tasin/vms/${display_name}/cpu.info"
+        rm -f "/root/.tasin/vms/${display_name}/dmi_product.info"
+        rm -f "/root/.tasin/vms/${display_name}/dmi_vendor.info"
+        rm -f "/root/.tasin/vms/${display_name}/vm_type.info"
         log_msg "VM Deleted (revoke): $vm"
     done
     rm -f "$GITHUB_STATE_FILE"
@@ -445,11 +475,11 @@ sync_from_remote() {
                 log_msg "Sync: VM $local_hostname removed from remote. Deleting."
                 docker network rm "net_${container_name}" >/dev/null 2>&1
                 docker rm -f "$container_name" >/dev/null 2>&1
-                rm -rf "/root/docker_data_${local_hostname}"
-                rm -f "/root/scripts-tasin/cpu_${local_hostname}.info"
-                rm -f "/root/scripts-tasin/dmi_product_${local_hostname}.info"
-                rm -f "/root/scripts-tasin/dmi_vendor_${local_hostname}.info"
-                rm -f "/root/scripts-tasin/vm_type_${local_hostname}.info"
+                rm -rf "/root/.tasin/data/${local_hostname}"
+                rm -f "/root/.tasin/vms/${local_hostname}/cpu.info"
+                rm -f "/root/.tasin/vms/${local_hostname}/dmi_product.info"
+                rm -f "/root/.tasin/vms/${local_hostname}/dmi_vendor.info"
+                rm -f "/root/.tasin/vms/${local_hostname}/vm_type.info"
                 remove_local_state "$container_name"
                 continue
             fi
@@ -463,14 +493,14 @@ sync_from_remote() {
                 docker exec "$new_container" bash -c "hostname $remote_new_hostname" >/dev/null 2>&1
                 docker exec "$new_container" bash -c "echo $remote_new_hostname > /etc/hostname" >/dev/null 2>&1
 
-                if [ -d "/root/docker_data_${local_hostname}" ]; then
-                    mv "/root/docker_data_${local_hostname}" "/root/docker_data_${remote_new_hostname}" 2>/dev/null
+                if [ -d "/root/.tasin/data/${local_hostname}" ]; then
+                    mv "/root/.tasin/data/${local_hostname}" "/root/.tasin/data/${remote_new_hostname}" 2>/dev/null
                 fi
 
-                for ext in cpu dmi_product dmi_vendor vm_type; do
-                    [ -f "/root/${ext}_${local_hostname}.info" ] && \
-                        mv "/root/${ext}_${local_hostname}.info" "/root/${ext}_${remote_new_hostname}.info" 2>/dev/null
-                done
+                # Rename the per-VM info directory to match the new hostname
+                if [ -d "/root/.tasin/vms/${local_hostname}" ]; then
+                    mv "/root/.tasin/vms/${local_hostname}" "/root/.tasin/vms/${remote_new_hostname}" 2>/dev/null
+                fi
 
                 if docker network inspect "net_${container_name}" >/dev/null 2>&1; then
                     docker network rename "net_${container_name}" "net_${new_container}" >/dev/null 2>&1
@@ -603,8 +633,8 @@ manage_vm_menu() {
         # ─── Gather live VM state for the dashboard ───
         local is_running=$(docker inspect -f '{{.State.Running}}' "$vm_name" 2>/dev/null)
         local vm_type_tag="${GREEN}VPS${NC}"
-        [ -f "/root/scripts-tasin/vm_type_${display_name}.info" ] && \
-            [ "$(cat /root/scripts-tasin/vm_type_${display_name}.info)" == "vds" ] && \
+        [ -f "/root/.tasin/vms/${display_name}/vm_type.info" ] && \
+            [ "$(cat /root/.tasin/vms/${display_name}/vm_type.info)" == "vds" ] && \
             vm_type_tag="${PURPLE}VDS${NC}"
 
         local status_badge
@@ -640,7 +670,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.1${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.2${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -697,7 +727,7 @@ manage_vm_menu() {
             2)
                 docker restart $vm_name
                 # Re-apply speed limit if configured
-                SPEED_FILE="/root/scripts-tasin/speed_${vm_name#tasin-vm-}.info"
+                SPEED_FILE="/root/.tasin/vms/${vm_name#tasin-vm-}/speed.info"
                 if [ -f "$SPEED_FILE" ]; then
                     SAVED_SPEED=$(cat "$SPEED_FILE")
                     docker exec "$vm_name" bash -c "
@@ -725,7 +755,7 @@ manage_vm_menu() {
             4)
                 docker start $vm_name
                 # Re-apply speed limit if configured
-                SPEED_FILE="/root/scripts-tasin/speed_${vm_name#tasin-vm-}.info"
+                SPEED_FILE="/root/.tasin/vms/${vm_name#tasin-vm-}/speed.info"
                 if [ -f "$SPEED_FILE" ]; then
                     SAVED_SPEED=$(cat "$SPEED_FILE")
                     docker exec "$vm_name" bash -c "
@@ -750,15 +780,15 @@ manage_vm_menu() {
                 echo -n " Are you sure? (y/n): "
                 read -r confirm
                 if [ "$confirm" == "y" ]; then
-                    OLD_TYPE=$(cat "/root/scripts-tasin/vm_type_${vm_name#tasin-vm-}.info" 2>/dev/null)
+                    OLD_TYPE=$(cat "/root/.tasin/vms/${vm_name#tasin-vm-}/vm_type.info" 2>/dev/null)
                     if [ -z "$OLD_TYPE" ]; then OLD_TYPE="vps"; fi
 
                     docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
-                    rm -rf "/root/docker_data_${vm_name#tasin-vm-}"
-                    rm -f "/root/scripts-tasin/cpu_${vm_name#tasin-vm-}.info"
-                    rm -f "/root/scripts-tasin/dmi_product_${vm_name#tasin-vm-}.info"
-                    rm -f "/root/scripts-tasin/dmi_vendor_${vm_name#tasin-vm-}.info"
+                    rm -rf "/root/.tasin/data/${vm_name#tasin-vm-}"
+                    rm -f "/root/.tasin/vms/${vm_name#tasin-vm-}/cpu.info"
+                    rm -f "/root/.tasin/vms/${vm_name#tasin-vm-}/dmi_product.info"
+                    rm -f "/root/.tasin/vms/${vm_name#tasin-vm-}/dmi_vendor.info"
                     remove_local_state "$vm_name"
                     log_msg "VM Wiped: $vm_name"
                     echo -e " ${GREEN}✔ VM Wiped.${NC} Sending to creation menu..."
@@ -775,14 +805,14 @@ manage_vm_menu() {
 
                     docker network rm "net_${vm_name}" >/dev/null 2>&1
                     docker rm -f $vm_name >/dev/null 2>&1
-                    rm -rf "/root/docker_data_${delete_hostname}"
-                    rm -f "/root/scripts-tasin/cpu_${delete_hostname}.info"
-                    rm -f "/root/scripts-tasin/dmi_product_${delete_hostname}.info"
-                    rm -f "/root/scripts-tasin/dmi_vendor_${delete_hostname}.info"
-                    rm -f "/root/scripts-tasin/vm_type_${delete_hostname}.info"
-                    rm -f "/root/scripts-tasin/gpu_name_${delete_hostname}.info"
-                    rm -f "/root/scripts-tasin/gpu_vram_${delete_hostname}.info"
-                    rm -f "/root/scripts-tasin/speed_${delete_hostname}.info"
+                    rm -rf "/root/.tasin/data/${delete_hostname}"
+                    rm -f "/root/.tasin/vms/${delete_hostname}/cpu.info"
+                    rm -f "/root/.tasin/vms/${delete_hostname}/dmi_product.info"
+                    rm -f "/root/.tasin/vms/${delete_hostname}/dmi_vendor.info"
+                    rm -f "/root/.tasin/vms/${delete_hostname}/vm_type.info"
+                    rm -f "/root/.tasin/vms/${delete_hostname}/gpu_name.info"
+                    rm -f "/root/.tasin/vms/${delete_hostname}/gpu_vram.info"
+                    rm -f "/root/.tasin/vms/${delete_hostname}/speed.info"
                     remove_local_state "$vm_name"
                     remove_vm_from_remote "$delete_hostname"
 
@@ -812,7 +842,7 @@ manage_vm_menu() {
                         echo -e " ${WHITE}${BOLD}  ${SSHX_LINK}${NC}"
                         echo ""
                         # Try to copy to clipboard via SSH
-                        echo "$SSHX_LINK" > "/root/scripts-tasin/sshx_${vm_name#tasin-vm-}.info"
+                        echo "$SSHX_LINK" > "/root/.tasin/vms/${vm_name#tasin-vm-}/sshx.info"
                     else
                         echo -e " ${YELLOW}SSHX output:${NC}"
                         echo "$SSHX_OUT"
@@ -905,12 +935,13 @@ create_vm() {
     fi
 
     VM_NAME="tasin-vm-$VM_ID_NAME"
-    DATA_DIR="/root/docker_data_$VM_ID_NAME"
-    mkdir -p "/root/scripts-tasin"
-    CPU_FILE="/root/scripts-tasin/cpu_$VM_ID_NAME.info"
-    DMI_PRODUCT_FILE="/root/scripts-tasin/dmi_product_$VM_ID_NAME.info"
-    DMI_VENDOR_FILE="/root/scripts-tasin/dmi_vendor_$VM_ID_NAME.info"
-    TYPE_FILE="/root/scripts-tasin/vm_type_$VM_ID_NAME.info"
+    DATA_DIR="$TASIN_DATA/$VM_ID_NAME"
+    local VM_INFO="$TASIN_VMS/$VM_ID_NAME"
+    mkdir -p "$VM_INFO"
+    CPU_FILE="$VM_INFO/cpu.info"
+    DMI_PRODUCT_FILE="$VM_INFO/dmi_product.info"
+    DMI_VENDOR_FILE="$VM_INFO/dmi_vendor.info"
+    TYPE_FILE="$VM_INFO/vm_type.info"
 
     echo "$VM_TYPE" > "$TYPE_FILE"
 
@@ -1113,8 +1144,8 @@ create_vm() {
         echo -e " ${GREEN}✔ GPU: ${GPU_SPOOF_NAME} (${GPU_SPOOF_VRAM}MB / ${gpu_vram_gb}GB VRAM)${NC}"
 
         # Save GPU info for persistence
-        echo "$GPU_SPOOF_NAME" > "/root/scripts-tasin/gpu_name_${VM_ID_NAME}.info"
-        echo "$GPU_SPOOF_VRAM" > "/root/scripts-tasin/gpu_vram_${VM_ID_NAME}.info"
+        echo "$GPU_SPOOF_NAME" > "/root/.tasin/vms/${VM_ID_NAME}/gpu_name.info"
+        echo "$GPU_SPOOF_VRAM" > "/root/.tasin/vms/${VM_ID_NAME}/gpu_vram.info"
 
         # Physical GPU passthrough (only if host has real GPUs)
         if command -v nvidia-smi >/dev/null 2>&1; then
@@ -1284,10 +1315,17 @@ create_vm() {
             read -r C_BASE_MHZ
             printf " 4. Enter Boost Speed (MHz, e.g. 4900.000): "
             read -r C_BOOST_MHZ
+            # Strip CRLF + whitespace (fixes custom CPU not working when input has trailing \r)
+            V_ID="${V_ID//$'\r'/}"; V_ID=$(echo "$V_ID" | xargs)
+            C_NAME="${C_NAME//$'\r'/}"; C_NAME=$(echo "$C_NAME" | xargs)
+            C_BASE_MHZ="${C_BASE_MHZ//$'\r'/}"; C_BASE_MHZ=$(echo "$C_BASE_MHZ" | xargs)
+            C_BOOST_MHZ="${C_BOOST_MHZ//$'\r'/}"; C_BOOST_MHZ=$(echo "$C_BOOST_MHZ" | xargs)
             if [ -z "$V_ID" ]; then V_ID="GenuineIntel"; fi
             if [ -z "$C_NAME" ]; then C_NAME="Custom CPU"; fi
             if [ -z "$C_BASE_MHZ" ]; then C_BASE_MHZ="2500.000"; fi
             if [ -z "$C_BOOST_MHZ" ]; then C_BOOST_MHZ="3500.000"; fi
+            echo -e " ${GREEN}✔ Custom CPU: ${C_NAME} (${V_ID}) @ ${C_BASE_MHZ}/${C_BOOST_MHZ} MHz${NC}"
+            sleep 1
             ;;
         4)
             USE_SPOOF=false
@@ -1766,7 +1804,7 @@ SLEOF
             fi
 
             # Save speed config for re-apply on reboot from manage menu
-            echo "$NET_SPEED" > "/root/scripts-tasin/speed_${VM_ID_NAME}.info"
+            echo "$NET_SPEED" > "/root/.tasin/vms/${VM_ID_NAME}/speed.info"
             # Also save inside container for persistence script
             docker exec "$VM_NAME" bash -c "echo ${NET_SPEED} > /root/.speed_limit_value" 2>/dev/null
 
@@ -1898,6 +1936,139 @@ GPU_CONF_EOF
             sed -i "/## TASIN_UPTIME_START ##/,/## TASIN_UPTIME_END ##/d" "$NEO" 2>/dev/null
             sed -i "/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d" "$NEO" 2>/dev/null
         ' 2>/dev/null
+
+        # ========================================
+        # FAKE lscpu WRAPPER (fixes "lscpu is glitched")
+        # The real lscpu reads from sysfs (/sys/devices/system/cpu/) which shows
+        # the HOST CPU, not the spoofed one. This wrapper parses /proc/cpuinfo
+        # (which IS spoofed via the bind mount) and outputs in lscpu format.
+        # Also saves CPU info to /etc/tasin-spoof/ for tools that check DMI.
+        # ========================================
+        if [ "$USE_SPOOF" = true ]; then
+            # Save CPU spoof values inside the container for the fake lscpu to read
+            docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '$V_ID' > /etc/tasin-spoof/cpu_vendor" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_NAME' > /etc/tasin-spoof/cpu_name" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_MHZ' > /etc/tasin-spoof/cpu_mhz" 2>/dev/null
+
+            # Build the fake lscpu wrapper on the host, then copy into container
+            cat << 'LSCPU_EOF' > /tmp/_fake_lscpu
+#!/bin/bash
+# TASIN fake lscpu v3.2 — reads spoofed /proc/cpuinfo + /etc/tasin-spoof/
+# Outputs in the same format as the real lscpu so neofetch / hwinfo / monitoring
+# tools all see the spoofed CPU model.
+
+# Read from spoof files (written by TASIN panel)
+VENDOR=""
+MODEL=""
+MHZ=""
+[ -f /etc/tasin-spoof/cpu_vendor ] && VENDOR=$(cat /etc/tasin-spoof/cpu_vendor 2>/dev/null | head -1 | tr -d '\r\n')
+[ -f /etc/tasin-spoof/cpu_name ]   && MODEL=$(cat /etc/tasin-spoof/cpu_name 2>/dev/null | head -1 | tr -d '\r\n')
+[ -f /etc/tasin-spoof/cpu_mhz ]    && MHZ=$(cat /etc/tasin-spoof/cpu_mhz 2>/dev/null | head -1 | tr -d '\r\n')
+
+# Fallback: parse /proc/cpuinfo (spoofed via bind mount)
+[ -z "$VENDOR" ] && VENDOR=$(grep -m1 '^vendor_id' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+[ -z "$MODEL" ]  && MODEL=$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+[ -z "$MHZ" ]    && MHZ=$(grep -m1 '^cpu MHz' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+
+# Count cores from /proc/cpuinfo
+CORES=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+[ -z "$CORES" ] && CORES=1
+SOCKETS=1
+CORES_PER_SOCKET=$CORES
+THREADS_PER_CORE=1
+
+# Virtualization type
+VIRT="VT-x"
+[ "$VENDOR" == "AuthenticAMD" ] && VIRT="AMD-V"
+
+# Handle --help
+if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
+    echo "Usage: lscpu [options]"
+    echo "Display information about the CPU architecture."
+    exit 0
+fi
+
+# Handle JSON output (-J)
+if [ "$1" == "-J" ] || [ "$1" == "--json" ]; then
+    cat << JSONEOF
+{
+   "lscpu": [
+      {"field": "Architecture:", "data": "x86_64"},
+      {"field": "CPU op-mode(s):", "data": "32-bit, 64-bit"},
+      {"field": "Byte Order:", "data": "Little Endian"},
+      {"field": "Address sizes:", "data": "46 bits physical, 48 bits virtual"},
+      {"field": "CPU(s):", "data": "$CORES"},
+      {"field": "On-line CPU(s) list:", "data": "0-$((CORES-1))"},
+      {"field": "Vendor ID:", "data": "$VENDOR"},
+      {"field": "Model name:", "data": "$MODEL"},
+      {"field": "CPU family:", "data": "6"},
+      {"field": "Model:", "data": "158"},
+      {"field": "Thread(s) per core:", "data": "$THREADS_PER_CORE"},
+      {"field": "Core(s) per socket:", "data": "$CORES_PER_SOCKET"},
+      {"field": "Socket(s):", "data": "$SOCKETS"},
+      {"field": "Stepping:", "data": "10"},
+      {"field": "CPU max MHz:", "data": "$MHZ"},
+      {"field": "CPU min MHz:", "data": "800.0000"},
+      {"field": "BogoMIPS:", "data": "$MHZ"},
+      {"field": "Virtualization:", "data": "$VIRT"},
+      {"field": "Hypervisor vendor:", "data": "KVM"},
+      {"field": "Virtualization type:", "data": "full"},
+      {"field": "L1d cache:", "data": "48 KiB"},
+      {"field": "L1i cache:", "data": "32 KiB"},
+      {"field": "L2 cache:", "data": "2 MiB"},
+      {"field": "L3 cache:", "data": "32 MiB"}
+   ]
+}
+JSONEOF
+    exit 0
+fi
+
+# Handle --parse / -p (extract specific fields)
+if [ "$1" == "-p" ] || [ "$1" == "--parse" ]; then
+    # Default parseable output: CPU,Core,Socket,Node
+    for ((i=0; i<CORES; i++)); do
+        echo "$i,$i,0,0"
+    done
+    exit 0
+fi
+
+# Default: pretty output (same format as real lscpu)
+echo "Architecture:        x86_64"
+echo "CPU op-mode(s):      32-bit, 64-bit"
+echo "Byte Order:          Little Endian"
+echo "Address sizes:       46 bits physical, 48 bits virtual"
+echo "CPU(s):              $CORES"
+echo "On-line CPU(s) list: 0-$((CORES-1))"
+echo "Vendor ID:           $VENDOR"
+echo "Model name:          $MODEL"
+echo "CPU family:          6"
+echo "Model:               158"
+echo "Thread(s) per core:  $THREADS_PER_CORE"
+echo "Core(s) per socket:  $CORES_PER_SOCKET"
+echo "Socket(s):           $SOCKETS"
+echo "Stepping:            10"
+echo "CPU max MHz:         $MHZ"
+echo "CPU min MHz:         800.0000"
+echo "BogoMIPS:            $MHZ"
+echo "Virtualization:      $VIRT"
+echo "Hypervisor vendor:   KVM"
+echo "Virtualization type: full"
+echo "L1d cache:           48 KiB"
+echo "L1i cache:           32 KiB"
+echo "L2 cache:            2 MiB"
+echo "L3 cache:            32 MiB"
+echo "NUMA node(s):        1"
+echo "NUMA node0 CPU(s):   0-$((CORES-1))"
+exit 0
+LSCPU_EOF
+            docker cp /tmp/_fake_lscpu "$VM_NAME":/usr/local/bin/lscpu
+            docker exec "$VM_NAME" chmod +x /usr/local/bin/lscpu 2>/dev/null
+            # Ensure /usr/local/bin is first in PATH (so our wrapper takes priority)
+            docker exec "$VM_NAME" bash -c "grep -q 'usr/local/bin' /etc/profile 2>/dev/null || echo 'export PATH=/usr/local/bin:\$PATH' >> /etc/profile" 2>/dev/null
+            rm -f /tmp/_fake_lscpu
+            echo -e " ${GREEN}✔ CPU spoof deployed (lscpu + /proc/cpuinfo)${NC}"
+        fi
 
         # 6. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
         if [ -n "$GPU_SPOOF_NAME" ]; then
@@ -2094,8 +2265,8 @@ show_vm_info() {
     echo -e "${CYAN}  │${NC}  ${WHITE}Created:${NC}        $created"
 
     local vm_type="VPS"
-    if [ -f "/root/scripts-tasin/vm_type_${display_name}.info" ]; then
-        vm_type=$(cat "/root/scripts-tasin/vm_type_${display_name}.info")
+    if [ -f "/root/.tasin/vms/${display_name}/vm_type.info" ]; then
+        vm_type=$(cat "/root/.tasin/vms/${display_name}/vm_type.info")
     fi
     if [ "$vm_type" == "vds" ]; then
         echo -e "${CYAN}  │${NC}  ${WHITE}Type:${NC}           ${PURPLE}VDS (KVM)${NC}"
@@ -2121,7 +2292,7 @@ show_vm_info() {
     local ip=$(get_vm_ip "$vm_name")
     echo -e "${CYAN}  │${NC}  ${WHITE}IP Address:${NC}     ${CYAN}${ip:-N/A}${NC}"
 
-    local speed_file="/root/scripts-tasin/speed_${display_name}.info"
+    local speed_file="/root/.tasin/vms/${display_name}/speed.info"
     if [ -f "$speed_file" ]; then
         local spd=$(cat "$speed_file")
         if [ "$spd" -ge 1000 ]; then
@@ -2133,12 +2304,12 @@ show_vm_info() {
         echo -e "${CYAN}  │${NC}  ${WHITE}Speed Limit:${NC}   ${DIM}Default (unlimited)${NC}"
     fi
 
-    local gpu_file="/root/scripts-tasin/gpu_name_${display_name}.info"
+    local gpu_file="/root/.tasin/vms/${display_name}/gpu_name.info"
     if [ -f "$gpu_file" ]; then
         local gpu_name_val=$(cat "$gpu_file")
         local gpu_vram=""
-        if [ -f "/root/scripts-tasin/gpu_vram_${display_name}.info" ]; then
-            gpu_vram=$(cat "/root/scripts-tasin/gpu_vram_${display_name}.info")
+        if [ -f "/root/.tasin/vms/${display_name}/gpu_vram.info" ]; then
+            gpu_vram=$(cat "/root/.tasin/vms/${display_name}/gpu_vram.info")
             local vram_gb=$((gpu_vram / 1024))
             echo -e "${CYAN}  │${NC}  ${WHITE}GPU:${NC}            ${CYAN}${gpu_name_val}${NC} ${DIM}[${gpu_vram}MB / ${vram_gb}GB]${NC}"
         else
@@ -2148,8 +2319,8 @@ show_vm_info() {
         echo -e "${CYAN}  │${NC}  ${WHITE}GPU:${NC}            ${DIM}None${NC}"
     fi
 
-    if [ -f "/root/scripts-tasin/dmi_product_${display_name}.info" ]; then
-        local model=$(cat "/root/scripts-tasin/dmi_product_${display_name}.info")
+    if [ -f "/root/.tasin/vms/${display_name}/dmi_product.info" ]; then
+        local model=$(cat "/root/.tasin/vms/${display_name}/dmi_product.info")
         echo -e "${CYAN}  │${NC}  ${WHITE}Model Name:${NC}    $model"
     fi
 
@@ -2200,7 +2371,7 @@ edit_vm_config() {
         echo -e "   RAM:    ${WHITE}${cur_mem_display}${NC}"
         echo -e "   CPU:    ${WHITE}${cur_cpu_display}${NC}"
 
-        local speed_file="/root/scripts-tasin/speed_${display_name}.info"
+        local speed_file="/root/.tasin/vms/${display_name}/speed.info"
         if [ -f "$speed_file" ]; then
             local spd=$(cat "$speed_file")
             if [ "$spd" -ge 1000 ]; then
@@ -2275,12 +2446,12 @@ edit_vm_config() {
                         tc qdisc add dev \$IFACE parent 1:10 handle 10: sfq perturb 10
                         echo '${new_speed}' > /root/.speed_limit_value
                     " 2>/dev/null
-                    echo "$new_speed" > "/root/scripts-tasin/speed_${display_name}.info"
+                    echo "$new_speed" > "/root/.tasin/vms/${display_name}/speed.info"
                     echo -e " ${GREEN}✔ Speed updated to ${new_speed}Mbps${NC}"
                     log_msg "Edit: $vm_name speed changed to ${new_speed}Mbps"
                 else
                     docker exec "$vm_name" bash -c "IFACE=\$(ip route 2>/dev/null | awk '/default/ {print \$5}' | head -1); [ -z "\$IFACE" ] && IFACE=eth0; tc qdisc del dev \$IFACE root 2>/dev/null" 2>/dev/null
-                    rm -f "/root/scripts-tasin/speed_${display_name}.info"
+                    rm -f "/root/.tasin/vms/${display_name}/speed.info"
                     docker exec "$vm_name" bash -c "rm -f /root/.speed_limit_value" 2>/dev/null
                     echo -e " ${GREEN}✔ Speed limit removed (unlimited)${NC}"
                     log_msg "Edit: $vm_name speed limit removed"
@@ -2364,6 +2535,68 @@ live_vm_performance() {
 }
 
 # ==================================================
+#       MIGRATION (v3.1 → v3.2: move to hidden .tasin/ directory)
+# ==================================================
+migrate_to_hidden_dir() {
+    # 1. Migrate old flat info files from /root/scripts-tasin/ to /root/.tasin/vms/<name>/
+    if [ -d "/root/scripts-tasin" ]; then
+        for f in /root/scripts-tasin/*_*.info; do
+            [ -f "$f" ] || continue
+            local base=$(basename "$f" .info)
+            # Split <type>_<name> — type is everything before the LAST _
+            local type="${base%_*}"
+            local name="${base##*_}"
+            # Handle names that contain underscores (e.g. vm_type_my_vm)
+            # Re-derive: type is first word, name is rest
+            type=$(echo "$base" | cut -d'_' -f1)
+            name=$(echo "$base" | cut -d'_' -f2-)
+            # Special: vm_type, dmi_product, dmi_vendor, gpu_name, gpu_vram are two-word types
+            case "$base" in
+                vm_type_*) type="vm_type"; name="${base#vm_type_}";;
+                dmi_product_*) type="dmi_product"; name="${base#dmi_product_}";;
+                dmi_vendor_*) type="dmi_vendor"; name="${base#dmi_vendor_}";;
+                gpu_name_*) type="gpu_name"; name="${base#gpu_name_}";;
+                gpu_vram_*) type="gpu_vram"; name="${base#gpu_vram_}";;
+            esac
+            [ -z "$name" ] && continue
+            mkdir -p "$TASIN_VMS/$name"
+            mv "$f" "$TASIN_VMS/$name/$type.info" 2>/dev/null
+        done
+        # Remove old now-empty directory
+        rmdir "/root/scripts-tasin" 2>/dev/null
+        log_msg "Migration: moved scripts-tasin info files to $TASIN_VMS/"
+    fi
+
+    # 2. Migrate old docker_data_* folders to /root/.tasin/data/<name>/
+    for d in /root/docker_data_*; do
+        [ -d "$d" ] || continue
+        local name="${d#/root/docker_data_}"
+        if [ "$name" == "test" ]; then
+            # Remove leftover 'test' data directory if the corresponding container no longer exists
+            if ! docker inspect "tasin-vm-test" >/dev/null 2>&1; then
+                rm -rf "$d"
+                log_msg "Migration: removed orphaned docker_data_test"
+                continue
+            fi
+        fi
+        mkdir -p "$TASIN_DATA"
+        mv "$d" "$TASIN_DATA/$name" 2>/dev/null
+        log_msg "Migration: moved $d to $TASIN_DATA/$name"
+    done
+
+    # 3. Migrate old log/state/license files
+    [ -f "/root/vm_manager.log" ] && [ ! -f "$TASIN_BASE/vm_manager.log" ] && \
+        mv "/root/vm_manager.log" "$TASIN_BASE/vm_manager.log" 2>/dev/null
+    [ -f "/root/.vm_remote_state" ] && [ ! -f "$TASIN_BASE/state" ] && \
+        mv "/root/.vm_remote_state" "$TASIN_BASE/state" 2>/dev/null
+    [ -f "/root/.vm_license_cache" ] && [ ! -f "$TASIN_BASE/license_cache" ] && \
+        mv "/root/.vm_license_cache" "$TASIN_BASE/license_cache" 2>/dev/null
+}
+
+# Run migration silently on startup
+migrate_to_hidden_dir 2>/dev/null
+
+# ==================================================
 #       MAIN LOOP
 # ==================================================
 
@@ -2405,7 +2638,7 @@ while true; do
             STATE=$(get_status "$vm")
             DISPLAY_NAME=${vm#tasin-vm-}
 
-            if [ -f "/root/scripts-tasin/vm_type_$DISPLAY_NAME.info" ] && [ "$(cat /root/scripts-tasin/vm_type_$DISPLAY_NAME.info)" == "vds" ]; then
+            if [ -f "/root/.tasin/vms/$DISPLAY_NAME/vm_type.info" ] && [ "$(cat /root/.tasin/vms/$DISPLAY_NAME/vm_type.info)" == "vds" ]; then
                 TYPE_TAG="${PURPLE}VDS${NC}   "
             else
                 TYPE_TAG="${GREEN}VPS${NC}   "
