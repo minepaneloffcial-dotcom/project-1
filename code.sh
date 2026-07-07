@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.5 PREMIUM++
-#  v3.5: Fixed VM boot failure (--init conflicts with systemd images),
-#        Fresh VPS Start no longer asks for RAM/CPU (uses container defaults)
+#  TASIN VPS CONTROL PANEL v3.6 PREMIUM++
+#  v3.6: Pre-boot summary screen (Enter to boot), live boot log streaming,
+#        OS-specific login screen (Ubuntu/Debian/Kali/Alpine welcome + prompt)
+#  v3.5: Fixed VM boot failure (--init conflicts with systemd images)
 #  v3.4: Fixed Docker lxcfs mount error, container-aware stats for ALL VMs
 #  v3.3: Hosting Name prompt, Fresh VPS Start mode, premium completion screen
 #  v3.2: Hidden .tasin/ directory + per-VM subdirs, fake lscpu, CPU Intel fix
@@ -35,7 +36,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.5${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.6${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -560,6 +561,8 @@ sync_from_remote() {
                 if [ -n "$remote_pass" ] && [ "$remote_pass" != "$local_password" ]; then
                     log_msg "Sync: Password changed for $local_hostname."
                     echo "root:${remote_pass}" | docker exec -i "$container_name" bash -c "chpasswd" 2>/dev/null
+                    # Update stored password for login screen validation
+                    docker exec "$container_name" bash -c "printf '%s\n' '${remote_pass}' > /etc/tasin-spoof/root_password" 2>/dev/null
                     save_local_state "$container_name" "$local_hostname" "$remote_pass" "${remote_ips[$local_hostname]}" "${remote_types[$local_hostname]}"
                 fi
 
@@ -711,7 +714,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.5${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.6${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -756,10 +759,21 @@ manage_vm_menu() {
                 if [ "$(docker inspect -f '{{.State.Running}}' $vm_name)" == "false" ]; then
                     echo -e " ${YELLOW}Starting VM first...${NC}"
                     docker start $vm_name >/dev/null 2>&1
+                    # Wait for VM to be ready
+                    for i in {1..15}; do
+                        if docker exec $vm_name echo "ready" >/dev/null 2>&1; then
+                            break
+                        fi
+                        sleep 2
+                    done
                 fi
                 clear
-                echo -e "${GREEN}Connecting to $vm_name... (Type 'exit' to disconnect)${NC}"
-                if docker exec $vm_name test -f /bin/bash >/dev/null 2>&1; then
+                echo -e "${GREEN}Connecting to $vm_name...${NC}"
+                echo -e "${DIM}(Type 'exit' to disconnect from the VM console)${NC}"
+                # Use the OS-specific login screen if available, else fall back to direct shell
+                if docker exec $vm_name test -f /usr/local/bin/tasin-login 2>/dev/null; then
+                    docker exec -it $vm_name /usr/local/bin/tasin-login
+                elif docker exec $vm_name test -f /bin/bash >/dev/null 2>&1; then
                     docker exec -it $vm_name /bin/bash
                 else
                     docker exec -it $vm_name /bin/sh
@@ -1584,10 +1598,109 @@ create_vm() {
     fi
 
     # ==========================================
+    # PRE-BOOT SUMMARY SCREEN (show details, then press Enter to boot)
+    # ==========================================
+
+    # CPU display string
+    local _pre_cpu_display="${DIM}Host CPU${NC}"
+    if [ "$USE_SPOOF" = true ]; then
+        local _cghz=$(awk "BEGIN{printf \"%.1f\", ${C_MHZ}/1000}")
+        _pre_cpu_display="${CYAN}${C_NAME}${NC} @ ${_cghz}GHz"
+    fi
+
+    # GPU display string
+    local _pre_gpu_display="${DIM}None${NC}"
+    if [ -n "$GPU_SPOOF_NAME" ]; then
+        local _ggb=$((GPU_SPOOF_VRAM / 1024))
+        _pre_gpu_display="${CYAN}${GPU_SPOOF_NAME}${NC} ${DIM}[${_ggb}GB]${NC}"
+    fi
+
+    # RAM / Disk display — handle empty RAM (fresh mode) by using host totals
+    local _pre_display_ram="${RAM}"
+    local _pre_display_cores="${CORES}"
+    if [ -z "$_pre_display_ram" ]; then
+        local _host_ram_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+        if [ -n "$_host_ram_mb" ] && [ "$_host_ram_mb" -ge 1024 ] 2>/dev/null; then
+            _pre_display_ram=$(awk "BEGIN{printf \"%.0fG\", $_host_ram_mb/1024}")
+        else
+            _pre_display_ram="${_host_ram_mb:-2G}M"
+        fi
+    fi
+    if [ -z "$_pre_display_cores" ]; then
+        _pre_display_cores=$(nproc 2>/dev/null)
+        [ -z "$_pre_display_cores" ] && _pre_display_cores=1
+    fi
+
+    local _pre_ram_display="${CYAN}${_pre_display_ram}${NC}"
+    if [ "$MODE" == "unlimited" ]; then
+        _pre_ram_display="${DIM}Unlimited (Host)${NC}"
+    elif [ "$MODE" == "fresh" ]; then
+        _pre_ram_display="${LIME}${_pre_display_ram}${NC} ${DIM}(Dynamic)${NC}"
+    fi
+
+    # Speed display
+    local _pre_speed_display="${DIM}Unlimited${NC}"
+    if [ -n "$NET_SPEED" ]; then
+        if [ "$NET_SPEED" -ge 1000 ]; then
+            _pre_speed_display="${CYAN}$((NET_SPEED/1000))Gbps${NC}"
+        else
+            _pre_speed_display="${CYAN}${NET_SPEED}Mbps${NC}"
+        fi
+    fi
+
+    # Price calculation
+    local _p_cpu=0; local _p_ram=0; local _p_disk=5; local _p_speed=0; local _p_gpu=0; local _p_type=0
+    [[ "$_pre_display_cores" =~ ^[0-9]+$ ]] && _p_cpu=$(( _pre_display_cores * 2 ))
+    local _p_ram_gb=0
+    local _p_ram_num=$(echo "$_pre_display_ram" | tr -dc '0-9')
+    local _p_ram_u=$(echo "$_pre_display_ram" | tr -dc 'a-zA-Z')
+    case "$_p_ram_u" in g|G) _p_ram_gb=$_p_ram_num;; m|M) _p_ram_gb=$(( _p_ram_num / 1024 ));; *) _p_ram_gb=$_p_ram_num;; esac
+    [ "$_p_ram_gb" -lt 1 ] 2>/dev/null && _p_ram_gb=1
+    _p_ram=$(( _p_ram_gb * 3 ))
+    [ -n "$NET_SPEED" ] && [[ "$NET_SPEED" =~ ^[0-9]+$ ]] && _p_speed=$(( NET_SPEED / 100 ))
+    [ -n "$GPU_SPOOF_NAME" ] && _p_gpu=15
+    [ "$VM_TYPE" == "vds" ] && _p_type=10
+    local _p_total=$(( _p_cpu + _p_ram + _p_disk + _p_speed + _p_gpu + _p_type ))
+
+    clear
+    echo -e "${GOLD}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e ""
+    echo -e "        ${BRIGHT_ORANGE}${BOLD}${HOSTING_NAME}${NC} ${PREMIUM}The Premium VPS Provider${NC}"
+    echo -e ""
+    echo -e "        ${YELLOW}${BOLD}📋 VM PROVISIONING SUMMARY${NC}"
+    echo -e ""
+    echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${BOLD}VM SPECIFICATIONS${NC}"
+    echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${WHITE}Hostname:${NC}       ${CYAN}${VM_ID_NAME}${NC}"
+    echo -e "  ${WHITE}VM Type:${NC}        ${CYAN}${VM_TYPE^^}${NC}"
+    echo -e "  ${WHITE}OS Image:${NC}       ${CYAN}${IMG}${NC}"
+    echo -e "  ${WHITE}CPU:${NC}             ${_pre_cpu_display}"
+    echo -e "  ${WHITE}RAM:${NC}             ${_pre_ram_display}"
+    echo -e "  ${WHITE}Disk:${NC}            ${CYAN}50GB${NC}"
+    echo -e "  ${WHITE}Network:${NC}        ${_pre_speed_display}"
+    echo -e "  ${WHITE}GPU:${NC}             ${_pre_gpu_display}"
+    echo -e "  ${WHITE}Root Password:${NC}   ${RED}${VM_PASS}${NC}"
+    echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${BOLD}INVOICE — Monthly Breakdown${NC}"
+    echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+    printf  "  ${WHITE}CPU${NC} (%s cores)              ${GREEN}\$%i${NC}/mo\n" "$_pre_display_cores" "$_p_cpu"
+    printf  "  ${WHITE}RAM${NC} (%sGB)                   ${GREEN}\$%i${NC}/mo\n" "$_p_ram_gb" "$_p_ram"
+    printf  "  ${WHITE}Disk${NC} (50GB SSD)              ${GREEN}\$%i${NC}/mo\n" "$_p_disk"
+    printf  "  ${WHITE}Network${NC}                      ${GREEN}\$%i${NC}/mo\n" "$_p_speed"
+    printf  "  ${WHITE}GPU${NC}                          ${GREEN}\$%i${NC}/mo\n" "$_p_gpu"
+    printf  "  ${WHITE}VDS Surcharge${NC}                ${GREEN}\$%i${NC}/mo\n" "$_p_type"
+    echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+    printf  "  ${BOLD}TOTAL PRICE${NC}                   ${GOLD}${BOLD}\$%i${NC}${BOLD}/mo${NC}\n" "$_p_total"
+    echo -e "${GOLD}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e ""
+    echo -ne "  ${BRIGHT_ORANGE}▶${NC} ${YELLOW}Press ENTER to start booting the VM...${NC}"
+    read -r _enter_to_boot
+
+    # ==========================================
     # EXECUTE AND LOG
     # ==========================================
     log_msg "Creating: $VM_NAME"
-    # Debug: log the full docker command before execution
     log_msg "Docker CMD: $CMD"
 
     DOCKER_ERR=$(eval "$CMD" 2>&1)
@@ -1598,17 +1711,23 @@ create_vm() {
         echo -e " ${BLUE}∞${NC} Configuring VM environment..."
 
         echo -e " ${YELLOW}Waiting for VM to fully boot...${NC}"
+        echo -e " ${DIM}Streaming boot logs (live):${NC}"
+        echo ""
         BOOTED=false
-        for i in {1..30}; do
-            STATE=$(docker inspect -f '{{.State.Running}}' "$VM_NAME" 2>/dev/null)
-            if [ "$STATE" == "true" ]; then
-                if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
-                    BOOTED=true
-                    break
-                fi
+        # Stream boot logs in background so user sees systemd [ OK ] messages
+        docker logs -f "$VM_NAME" 2>&1 &
+        LOG_PID=$!
+        for i in {1..45}; do
+            if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
+                BOOTED=true
+                break
             fi
             sleep 2
         done
+        # Kill the background log streamer
+        kill $LOG_PID 2>/dev/null
+        wait $LOG_PID 2>/dev/null
+        echo ""
 
         # Fallback: if boot failed, try recreating WITHOUT --init (systemd conflict)
         if [ "$BOOTED" == false ] && [ "$IS_FULL" = true ]; then
@@ -1644,16 +1763,20 @@ create_vm() {
             DOCKER_ERR=$(eval "$CMD" 2>&1)
             STATUS=$?
             if [ $STATUS -eq 0 ]; then
-                for i in {1..30}; do
-                    STATE=$(docker inspect -f '{{.State.Running}}' "$VM_NAME" 2>/dev/null)
-                    if [ "$STATE" == "true" ]; then
-                        if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
-                            BOOTED=true
-                            break
-                        fi
+                echo -e " ${DIM}Streaming boot logs (live):${NC}"
+                echo ""
+                docker logs -f "$VM_NAME" 2>&1 &
+                LOG_PID=$!
+                for i in {1..45}; do
+                    if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
+                        BOOTED=true
+                        break
                     fi
                     sleep 2
                 done
+                kill $LOG_PID 2>/dev/null
+                wait $LOG_PID 2>/dev/null
+                echo ""
             fi
         fi
 
@@ -1666,8 +1789,125 @@ create_vm() {
             return
         fi
 
-        # 1. Set Root Password
+        # 1. Set Root Password + store for login screen validation
         echo "root:$VM_PASS" | docker exec -i "$VM_NAME" $VM_SHELL -c "chpasswd"
+        # Store root password inside container so the login screen can validate
+        docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
+        docker exec "$VM_NAME" bash -c "printf '%s\n' '$VM_PASS' > /etc/tasin-spoof/root_password" 2>/dev/null
+
+        # 1b. Install OS-specific login screen script
+        cat << 'LOGIN_EOF' > /tmp/_tasin_login
+#!/bin/sh
+# TASIN VM Login Screen v3.6
+# Shows an OS-specific console login prompt, validates credentials,
+# then drops to a shell with the OS-specific MOTD welcome banner.
+
+# Load OS info
+OS_NAME="Linux"
+OS_VERSION=""
+OS_PRETTY=""
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_NAME="$NAME"
+    OS_VERSION="$VERSION_ID"
+    OS_PRETTY="$PRETTY_NAME"
+fi
+
+HOSTNAME=$(hostname)
+KERNEL=$(uname -r)
+
+# Read stored root password
+ROOT_PASS=""
+if [ -f /etc/tasin-spoof/root_password ]; then
+    ROOT_PASS=$(cat /etc/tasin-spoof/root_password 2>/dev/null | head -1 | tr -d '\r\n')
+fi
+
+# Login loop
+MAX_TRIES=3
+TRIES=0
+while [ "$TRIES" -lt "$MAX_TRIES" ]; do
+    echo ""
+    echo "${OS_PRETTY:-$OS_NAME $OS_VERSION} ${HOSTNAME} console"
+    echo ""
+    printf "login as: "
+    read -r USERNAME
+    [ -z "$USERNAME" ] && continue
+
+    # Only root is allowed
+    if [ "$USERNAME" != "root" ]; then
+        echo "Login incorrect"
+        TRIES=$((TRIES + 1))
+        continue
+    fi
+
+    # Read password (hidden)
+    printf "Password: "
+    read -rs PASSWORD
+    echo ""
+
+    # Validate
+    if [ "$PASSWORD" = "$ROOT_PASS" ]; then
+        # Login successful — show OS-specific MOTD
+        echo ""
+        case "$OS_NAME" in
+            Ubuntu)
+                echo "Welcome to ${OS_NAME} ${OS_VERSION} LTS (GNU/Linux ${KERNEL} x86_64)"
+                echo ""
+                echo " * Documentation:  https://help.ubuntu.com"
+                echo " * Management:     https://landscape.canonical.com"
+                echo " * Support:        https://ubuntu.com/pro"
+                echo ""
+                echo "This system has been minimized by removing packages and content that are"
+                echo "not required on a system that users do not log into."
+                echo ""
+                echo "To restore this content, you can run the 'unminimize' command."
+                ;;
+            Debian)
+                echo "Linux ${HOSTNAME} ${OS_VERSION} (GNU/Linux ${KERNEL} x86_64)"
+                echo ""
+                echo " * Documentation:  https://www.debian.org/doc/"
+                echo " * Management:     https://www.debian.org/support"
+                echo " * Support:        https://www.debian.org/support"
+                ;;
+            Kali)
+                echo "Kali GNU/Linux Rolling (GNU/Linux ${KERNEL} x86_64)"
+                echo ""
+                echo " * Documentation:  https://www.kali.org/docs/"
+                echo " * Support:        https://forums.kali.org/"
+                ;;
+            Alpine)
+                echo "Welcome to Alpine Linux ${OS_VERSION}"
+                echo "Kernel ${KERNEL} on an x86_64 (/dev/tty1)"
+                echo ""
+                echo " * Documentation:  https://alpinelinux.org/docs/"
+                ;;
+            *)
+                echo "Welcome to ${OS_PRETTY:-$OS_NAME}"
+                ;;
+        esac
+        echo ""
+        echo "Last login: $(date '+%a %b %d %H:%M:%S %Y') from console"
+        echo ""
+        # Drop to shell
+        if [ -x /bin/bash ]; then
+            exec /bin/bash
+        else
+            exec /bin/sh
+        fi
+    else
+        echo "Login incorrect"
+        TRIES=$((TRIES + 1))
+    fi
+done
+
+echo ""
+echo "Maximum login attempts exceeded. Connection closed."
+sleep 1
+exit 1
+LOGIN_EOF
+        docker cp /tmp/_tasin_login "$VM_NAME":/usr/local/bin/tasin-login
+        docker exec "$VM_NAME" chmod +x /usr/local/bin/tasin-login 2>/dev/null
+        rm -f /tmp/_tasin_login
 
         # 2. CUSTOM UPTIME (dynamic: starts at offset, grows naturally with container)
         # Save real uptime binary first (for SYSTEM mode passthrough)
@@ -2553,147 +2793,11 @@ LSHWEOF
             push_vm_to_remote "$VM_NAME" "$VM_ID_NAME" "$VM_PASS" "$effective_ip" "$VM_TYPE"
         fi
 
-        echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
-
-        # ==========================================
-        # PREMIUM COMPLETION SCREEN (invoice + details)
-        # ==========================================
-        # Gather details for the delivery screen
-        local _final_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$VM_NAME" 2>/dev/null)
-        [ -z "$_final_ip" ] && _final_ip="N/A"
-
-        # CPU display string
-        local _cpu_display="${DIM}Host CPU${NC}"
-        if [ "$USE_SPOOF" = true ]; then
-            local _cghz=$(awk "BEGIN{printf \"%.1f\", ${C_MHZ}/1000}")
-            _cpu_display="${CYAN}${C_NAME}${NC} @ ${_cghz}GHz"
-        fi
-
-        # GPU display string
-        local _gpu_display="${DIM}None${NC}"
-        if [ -n "$GPU_SPOOF_NAME" ]; then
-            local _ggb=$((GPU_SPOOF_VRAM / 1024))
-            _gpu_display="${CYAN}${GPU_SPOOF_NAME}${NC} ${DIM}[${_ggb}GB]${NC}"
-        fi
-
-        # RAM / Disk display — handle empty RAM (fresh mode) by using host totals
-        local _display_ram="${RAM}"
-        local _display_cores="${CORES}"
-        if [ -z "$_display_ram" ]; then
-            # Fresh mode or unlimited: show host's total RAM
-            local _host_ram_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
-            if [ -n "$_host_ram_mb" ] && [ "$_host_ram_mb" -ge 1024 ] 2>/dev/null; then
-                _display_ram=$(awk "BEGIN{printf \"%.0fG\", $_host_ram_mb/1024}")
-            else
-                _display_ram="${_host_ram_mb:-2G}M"
-            fi
-        fi
-        if [ -z "$_display_cores" ]; then
-            _display_cores=$(nproc 2>/dev/null)
-            [ -z "$_display_cores" ] && _display_cores=1
-        fi
-
-        local _ram_display="${CYAN}${_display_ram}${NC}"
-        local _disk_display="${CYAN}50GB${NC}"
-        if [ "$MODE" == "unlimited" ]; then
-            _ram_display="${DIM}Unlimited (Host)${NC}"
-        elif [ "$MODE" == "fresh" ]; then
-            _ram_display="${LIME}${_display_ram}${NC} ${DIM}(Dynamic)${NC}"
-        fi
-
-        # Speed display
-        local _speed_display="${DIM}Unlimited${NC}"
-        if [ -n "$NET_SPEED" ]; then
-            if [ "$NET_SPEED" -ge 1000 ]; then
-                _speed_display="${CYAN}$((NET_SPEED/1000))Gbps${NC}"
-            else
-                _speed_display="${CYAN}${NET_SPEED}Mbps${NC}"
-            fi
-        fi
-
-        # ─── Price calculation (monthly USD) ───
-        local _price_cpu=0      # $2 per core
-        local _price_ram=0      # $3 per GB
-        local _price_disk=5     # base 50GB = $5
-        local _price_speed=0    # $1 per 100Mbps
-        local _price_gpu=0      # $15 if GPU present
-        local _price_type=0     # VDS surcharge $10
-
-        # CPU price
-        if [[ "$_display_cores" =~ ^[0-9]+$ ]]; then
-            _price_cpu=$(( _display_cores * 2 ))
-        fi
-
-        # RAM price (parse GB from _display_ram)
-        local _ram_gb=0
-        local _ram_num=$(echo "$_display_ram" | tr -dc '0-9')
-        local _ram_u=$(echo "$_display_ram" | tr -dc 'a-zA-Z')
-        case "$_ram_u" in
-            g|G) _ram_gb=$_ram_num;;
-            m|M) _ram_gb=$(( _ram_num / 1024 ));;
-            *)   _ram_gb=$_ram_num;;
-        esac
-        [ "$_ram_gb" -lt 1 ] 2>/dev/null && _ram_gb=1
-        _price_ram=$(( _ram_gb * 3 ))
-
-        # Speed price
-        if [ -n "$NET_SPEED" ] && [[ "$NET_SPEED" =~ ^[0-9]+$ ]]; then
-            _price_speed=$(( NET_SPEED / 100 ))
-        fi
-
-        # GPU price
-        if [ -n "$GPU_SPOOF_NAME" ]; then
-            _price_gpu=15
-        fi
-
-        # VDS surcharge
-        if [ "$VM_TYPE" == "vds" ]; then
-            _price_type=10
-        fi
-
-        local _price_total=$(( _price_cpu + _price_ram + _price_disk + _price_speed + _price_gpu + _price_type ))
-
-        # OS name
-        local _os_display="${CYAN}${IMG}${NC}"
-
-        # ─── Render the premium completion screen ───
-        clear
-        echo -e "${GOLD}═══════════════════════════════════════════════════════════════${NC}"
         echo -e ""
-        echo -e "        ${BRIGHT_ORANGE}${BOLD}${HOSTING_NAME}${NC} ${PREMIUM}The Premium VPS Provider${NC}"
-        echo -e ""
-        echo -e "        ${GREEN}${BOLD}✔ VPS DEPLOYED SUCCESSFULLY${NC}"
-        echo -e ""
-        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
-        echo -e "  ${BOLD}VM DETAILS${NC}"
-        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
-        echo -e "  ${WHITE}Hostname:${NC}       ${CYAN}${VM_ID_NAME}${NC}"
-        echo -e "  ${WHITE}VM Type:${NC}        ${CYAN}${VM_TYPE^^}${NC}"
-        echo -e "  ${WHITE}IP Address:${NC}     ${CYAN}${_final_ip}${NC}"
-        echo -e "  ${WHITE}OS Image:${NC}       ${CYAN}${IMG}${NC}"
-        echo -e "  ${WHITE}CPU:${NC}             ${_cpu_display}"
-        echo -e "  ${WHITE}RAM:${NC}             ${_ram_display}"
-        echo -e "  ${WHITE}Disk:${NC}            ${_disk_display}"
-        echo -e "  ${WHITE}Network:${NC}        ${_speed_display}"
-        echo -e "  ${WHITE}GPU:${NC}             ${_gpu_display}"
-        echo -e "  ${WHITE}Root Password:${NC}   ${RED}${VM_PASS}${NC}"
-        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
-        echo -e "  ${BOLD}INVOICE — Monthly Breakdown${NC}"
-        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
-        printf  "  ${WHITE}CPU${NC} (%s cores)              ${GREEN}\$%i${NC}/mo\n" "$_display_cores" "$_price_cpu"
-        printf  "  ${WHITE}RAM${NC} (%sGB)                   ${GREEN}\$%i${NC}/mo\n" "$_ram_gb" "$_price_ram"
-        printf  "  ${WHITE}Disk${NC} (50GB SSD)              ${GREEN}\$%i${NC}/mo\n" "$_price_disk"
-        printf  "  ${WHITE}Network${NC}                      ${GREEN}\$%i${NC}/mo\n" "$_price_speed"
-        printf  "  ${WHITE}GPU${NC}                          ${GREEN}\$%i${NC}/mo\n" "$_price_gpu"
-        printf  "  ${WHITE}VDS Surcharge${NC}                ${GREEN}\$%i${NC}/mo\n" "$_price_type"
-        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
-        printf  "  ${BOLD}TOTAL PRICE${NC}                   ${GOLD}${BOLD}\$%i${NC}${BOLD}/mo${NC}\n" "$_price_total"
-        echo -e "${GOLD}═══════════════════════════════════════════════════════════════${NC}"
-        echo -e ""
-        echo -e "  ${DIM}Your VPS is ready. Connect with: docker exec -it ${VM_NAME} /bin/bash${NC}"
-        echo -e ""
-        echo -ne "  ${BRIGHT_ORANGE}▶${NC} ${YELLOW}Press ENTER to continue to the VM manager...${NC}"
-        read -r _enter_to_continue
+        echo -e "  ${GREEN}${BOLD}✔ VM BOOTED & CONFIGURED SUCCESSFULLY!${NC}"
+        echo -e "  ${DIM}Redirecting to VM manager...${NC}"
+        echo ""
+        sleep 2
         manage_vm_menu "$VM_NAME"
     else
         log_msg "ERROR: Container creation failed. $DOCKER_ERR"
@@ -2876,6 +2980,8 @@ edit_vm_config() {
                 read -r new_pass
                 if [ -n "$new_pass" ]; then
                     echo "root:$new_pass" | docker exec -i "$vm_name" bash -c "chpasswd" 2>/dev/null
+                    # Update stored password for login screen validation
+                    docker exec "$vm_name" bash -c "printf '%s\n' '$new_pass' > /etc/tasin-spoof/root_password" 2>/dev/null
                     local old_state=$(get_local_state "$vm_name")
                     local hname=$(echo "$old_state" | cut -d'|' -f1)
                     local old_ip=$(echo "$old_state" | cut -d'|' -f3)
@@ -3142,7 +3248,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.5${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.6${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
