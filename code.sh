@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.4 PREMIUM++
-#  v3.4: Fixed Docker lxcfs mount error, container-aware stats now DEFAULT
-#        for ALL VMs (neofetch/free show container's own RAM), fixed host
-#        CPU% and RAM display, fixed main menu layout alignment
+#  TASIN VPS CONTROL PANEL v3.5 PREMIUM++
+#  v3.5: Fixed VM boot failure (--init conflicts with systemd images),
+#        Fresh VPS Start no longer asks for RAM/CPU (uses container defaults)
+#  v3.4: Fixed Docker lxcfs mount error, container-aware stats for ALL VMs
 #  v3.3: Hosting Name prompt, Fresh VPS Start mode, premium completion screen
 #  v3.2: Hidden .tasin/ directory + per-VM subdirs, fake lscpu, CPU Intel fix
 #  v3.1: Dynamic uptime, neofetch config fix, custom host fix, faster VPS tuning
@@ -35,7 +35,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${YELLOW}v3.0${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.5${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -711,7 +711,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.4${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.5${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -1103,25 +1103,18 @@ create_vm() {
         echo -e " ${PURPLE}>> System Default Selected: Using full Host Power.${NC}"
         sleep 1
     elif [ "$res_type" == "4" ]; then
-        # Fresh VPS Start — container sees its OWN resources, not the host's.
-        # We set a memory limit (so cgroup reports realistic RAM) and use LXCFS
-        # to make /proc/meminfo, /proc/cpuinfo, free -h, neofetch all show
-        # CONTAINER values instead of host values.
+        # Fresh VPS Start — NO RAM/CPU limits set. The container uses whatever
+        # it needs from the host, and the stats wrappers show the CONTAINER's
+        # actual usage (not the host's total). This is like a "real" VPS where
+        # you see your own usage without a hard limit.
         MODE="fresh"
         FRESH_MODE=true
+        RAM=""
+        CORES=""
         echo -e " ${LIME}>> Fresh VPS Start Selected.${NC}"
-        echo -e " ${DIM}   neofetch / free -h will show the container's own RAM & CPU usage.${NC}"
-        echo -e ""
-        echo -n " Enter RAM limit (e.g. 2g, 4g, 8g) [default 2g]: "
-        read -r RAM
-        if [ -z "$RAM" ]; then RAM="2g"; fi
-        RAM=$(echo "$RAM" | tr -d '[:space:]')
-
-        echo -n " Enter CPU Cores (e.g. 1, 2, 4) [default 2]: "
-        read -r CORES
-        if [ -z "$CORES" ]; then CORES="2"; fi
-        CORES=$(echo "$CORES" | tr -d '[:space:]')
-        sleep 1
+        echo -e " ${DIM}   No hard RAM/CPU limits — the container uses host resources${NC}"
+        echo -e " ${DIM}   dynamically, and neofetch/free show the container's OWN usage.${NC}"
+        sleep 2
     else
         echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
         read -r RAM
@@ -1517,16 +1510,23 @@ create_vm() {
     echo -e " ${BLUE}▶${NC} Deploying container..."
 
     # ==========================================
-    # COMMAND CONSTRUCTION (v3.1: performance-tuned)
+    # COMMAND CONSTRUCTION (v3.5: performance-tuned + boot fix)
     # Optimizations:
-    #   --init              → proper PID 1 / signal handling (no zombie processes, clean shutdown)
     #   --cpu-shares=2048   → higher CPU priority than default containers (default=1024)
     #   --blkio-weight=1000 → max disk I/O priority (default=500, max=1000)
     #   --shm-size=256m     → larger /dev/shm (default 64M causes crashes for Redis/MariaDB/Node)
     #   --pids-limit=-1     → unlimited processes (default may block forks under load)
     #   --dns 1.1.1.1 8.8.8.8 → fast public DNS for snappy apt/git/curl
+    # NOTE: --init is ONLY used for non-systemd images. Systemd images
+    #   (jrei/systemd-*) must have /sbin/init as PID 1 — adding --init wraps
+    #   it with tini, which causes "Couldn't find an alternative telinit"
+    #   boot failures.
     # ==========================================
-    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --init --cpu-shares=2048 --blkio-weight=1000 --shm-size=256m --pids-limit=-1 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
+    local _init_flag=""
+    if [ "$IS_FULL" != true ]; then
+        _init_flag="--init"
+    fi
+    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped $_init_flag --cpu-shares=2048 --blkio-weight=1000 --shm-size=256m --pids-limit=-1 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
 
     # GPU PASSTHROUGH (real device, only if user chose one)
     if [ -n "$GPU_DEVICE" ]; then
@@ -1548,11 +1548,10 @@ create_vm() {
     elif [ "$MODE" == "shared" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM"
     elif [ "$MODE" == "fresh" ]; then
-        # Fresh VPS Start: hard RAM/CPU limits. Container-aware stats are
-        # handled by fake free/df wrappers + neofetch override (installed for
-        # ALL VMs below), NOT by lxcfs bind mounts (which cause Docker errors
-        # when lxcfs files don't exist on the host).
-        CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
+        # Fresh VPS Start: NO hard limits — container uses host resources
+        # dynamically. Container-aware stats (fake free/df + neofetch override)
+        # are installed for ALL VMs below. No --cpus or --memory flags here.
+        :
     fi
 
     if [ "$VM_TYPE" == "vds" ]; then
@@ -1600,7 +1599,7 @@ create_vm() {
 
         echo -e " ${YELLOW}Waiting for VM to fully boot...${NC}"
         BOOTED=false
-        for i in {1..20}; do
+        for i in {1..30}; do
             STATE=$(docker inspect -f '{{.State.Running}}' "$VM_NAME" 2>/dev/null)
             if [ "$STATE" == "true" ]; then
                 if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
@@ -1610,6 +1609,53 @@ create_vm() {
             fi
             sleep 2
         done
+
+        # Fallback: if boot failed, try recreating WITHOUT --init (systemd conflict)
+        if [ "$BOOTED" == false ] && [ "$IS_FULL" = true ]; then
+            echo -e " ${YELLOW}⚠ First boot attempt failed. Retrying with adjusted init...${NC}"
+            log_msg "VM $VM_NAME boot failed on first attempt, retrying without --init"
+            docker rm -f "$VM_NAME" >/dev/null 2>&1
+            # Rebuild CMD without --init (in case it was set) and without --privileged's
+            # cgroup conflicts — use a simpler launch
+            CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cpu-shares=2048 --blkio-weight=1000 --shm-size=256m --pids-limit=-1 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
+            if [ -n "$GPU_DEVICE" ]; then
+                if [ "$GPU_DEVICE" == "all" ]; then CMD="$CMD --gpus all"; else CMD="$CMD --gpus device=$GPU_DEVICE"; fi
+                CMD="$CMD --runtime=nvidia"
+            fi
+            CMD="$CMD --privileged --cgroupns=host --security-opt seccomp=unconfined --tmpfs /tmp --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw"
+            if [ "$MODE" == "dedicated" ]; then
+                CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
+            elif [ "$MODE" == "shared" ]; then
+                CMD="$CMD --cpus=$CORES --memory=$RAM"
+            # fresh mode: no limits (same as main CMD construction)
+            fi
+            if [ "$VM_TYPE" == "vds" ] && [ "$(check_real_kvm)" == "true" ]; then
+                CMD="$CMD --device /dev/kvm"
+            fi
+            if [ "$USE_SPOOF" = true ]; then
+                CMD="$CMD -v $CPU_FILE:/proc/cpuinfo:ro"
+            fi
+            if [ -n "$MODEL_NAME" ]; then
+                CMD="$CMD -v $DMI_PRODUCT_FILE:/etc/custom_product_name:ro"
+                CMD="$CMD -v $DMI_VENDOR_FILE:/etc/custom_sys_vendor:ro"
+            fi
+            CMD="$CMD $IMG /sbin/init"
+            log_msg "Retry CMD: $CMD"
+            DOCKER_ERR=$(eval "$CMD" 2>&1)
+            STATUS=$?
+            if [ $STATUS -eq 0 ]; then
+                for i in {1..30}; do
+                    STATE=$(docker inspect -f '{{.State.Running}}' "$VM_NAME" 2>/dev/null)
+                    if [ "$STATE" == "true" ]; then
+                        if docker exec "$VM_NAME" echo "ready" >/dev/null 2>&1; then
+                            BOOTED=true
+                            break
+                        fi
+                    fi
+                    sleep 2
+                done
+            fi
+        fi
 
         if [ "$BOOTED" == false ]; then
             echo -e " ${RED}✘ VM failed to boot. Your host kernel may not support nested Systemd.${NC}"
@@ -1838,8 +1884,10 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
 
         # Determine RAM limit in MB for ALL modes
         local _ram_mb
-        if [ "$MODE" == "unlimited" ]; then
-            # Unlimited mode: use host's total RAM as the container's "limit"
+        if [ "$MODE" == "unlimited" ] || [ "$MODE" == "fresh" ] || [ -z "$RAM" ]; then
+            # Unlimited / Fresh mode / no RAM set: use host's total RAM as the
+            # container's "limit" (so neofetch/free show host total as the cap,
+            # but actual usage comes from the container's cgroup)
             _ram_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
             [ -z "$_ram_mb" ] && _ram_mb=2048
         else
@@ -1853,7 +1901,14 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
         fi
         [ -z "$_ram_mb" ] && _ram_mb=2048
         docker exec "$VM_NAME" bash -c "printf '%s\n' '$_ram_mb' > /etc/tasin-spoof/ram_limit_mb" 2>/dev/null
-        docker exec "$VM_NAME" bash -c "printf '%s\n' '${CORES:-1}' > /etc/tasin-spoof/cpu_cores" 2>/dev/null
+
+        # Determine CPU cores for display
+        local _cores_for_display="${CORES:-}"
+        if [ -z "$_cores_for_display" ]; then
+            _cores_for_display=$(nproc 2>/dev/null)
+            [ -z "$_cores_for_display" ] && _cores_for_display=1
+        fi
+        docker exec "$VM_NAME" bash -c "printf '%s\n' '$_cores_for_display' > /etc/tasin-spoof/cpu_cores" 2>/dev/null
 
         # ─── Fake `free` wrapper: shows container's own RAM limit + actual usage ───
         cat << 'FREE_EOF' > /tmp/_fake_free
@@ -2521,13 +2576,29 @@ LSHWEOF
             _gpu_display="${CYAN}${GPU_SPOOF_NAME}${NC} ${DIM}[${_ggb}GB]${NC}"
         fi
 
-        # RAM / Disk display
-        local _ram_display="${CYAN}${RAM}${NC}"
+        # RAM / Disk display — handle empty RAM (fresh mode) by using host totals
+        local _display_ram="${RAM}"
+        local _display_cores="${CORES}"
+        if [ -z "$_display_ram" ]; then
+            # Fresh mode or unlimited: show host's total RAM
+            local _host_ram_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+            if [ -n "$_host_ram_mb" ] && [ "$_host_ram_mb" -ge 1024 ] 2>/dev/null; then
+                _display_ram=$(awk "BEGIN{printf \"%.0fG\", $_host_ram_mb/1024}")
+            else
+                _display_ram="${_host_ram_mb:-2G}M"
+            fi
+        fi
+        if [ -z "$_display_cores" ]; then
+            _display_cores=$(nproc 2>/dev/null)
+            [ -z "$_display_cores" ] && _display_cores=1
+        fi
+
+        local _ram_display="${CYAN}${_display_ram}${NC}"
         local _disk_display="${CYAN}50GB${NC}"
         if [ "$MODE" == "unlimited" ]; then
             _ram_display="${DIM}Unlimited (Host)${NC}"
         elif [ "$MODE" == "fresh" ]; then
-            _ram_display="${LIME}${RAM}${NC} ${DIM}(Fresh)${NC}"
+            _ram_display="${LIME}${_display_ram}${NC} ${DIM}(Dynamic)${NC}"
         fi
 
         # Speed display
@@ -2541,7 +2612,6 @@ LSHWEOF
         fi
 
         # ─── Price calculation (monthly USD) ───
-        # Base prices per resource
         local _price_cpu=0      # $2 per core
         local _price_ram=0      # $3 per GB
         local _price_disk=5     # base 50GB = $5
@@ -2550,20 +2620,20 @@ LSHWEOF
         local _price_type=0     # VDS surcharge $10
 
         # CPU price
-        if [ -n "$CORES" ] && [[ "$CORES" =~ ^[0-9]+$ ]]; then
-            _price_cpu=$(( CORES * 2 ))
+        if [[ "$_display_cores" =~ ^[0-9]+$ ]]; then
+            _price_cpu=$(( _display_cores * 2 ))
         fi
 
-        # RAM price (parse GB)
+        # RAM price (parse GB from _display_ram)
         local _ram_gb=0
-        local _ram_num=$(echo "$RAM" | tr -dc '0-9')
-        local _ram_u=$(echo "$RAM" | tr -dc 'a-zA-Z')
+        local _ram_num=$(echo "$_display_ram" | tr -dc '0-9')
+        local _ram_u=$(echo "$_display_ram" | tr -dc 'a-zA-Z')
         case "$_ram_u" in
             g|G) _ram_gb=$_ram_num;;
             m|M) _ram_gb=$(( _ram_num / 1024 ));;
             *)   _ram_gb=$_ram_num;;
         esac
-        [ "$_ram_gb" -lt 1 ] && _ram_gb=1
+        [ "$_ram_gb" -lt 1 ] 2>/dev/null && _ram_gb=1
         _price_ram=$(( _ram_gb * 3 ))
 
         # Speed price
@@ -2610,7 +2680,7 @@ LSHWEOF
         echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
         echo -e "  ${BOLD}INVOICE — Monthly Breakdown${NC}"
         echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
-        printf  "  ${WHITE}CPU${NC} (%s cores)              ${GREEN}\$%i${NC}/mo\n" "$CORES" "$_price_cpu"
+        printf  "  ${WHITE}CPU${NC} (%s cores)              ${GREEN}\$%i${NC}/mo\n" "$_display_cores" "$_price_cpu"
         printf  "  ${WHITE}RAM${NC} (%sGB)                   ${GREEN}\$%i${NC}/mo\n" "$_ram_gb" "$_price_ram"
         printf  "  ${WHITE}Disk${NC} (50GB SSD)              ${GREEN}\$%i${NC}/mo\n" "$_price_disk"
         printf  "  ${WHITE}Network${NC}                      ${GREEN}\$%i${NC}/mo\n" "$_price_speed"
@@ -3072,7 +3142,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.4${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.5${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
