@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.3 PREMIUM++
-#  v3.3: Hosting Name prompt, Fresh VPS Start mode (container-aware stats),
-#        Premium completion screen with invoice + price breakdown,
-#        Redesigned main menu with live host dashboard,
-#        lscpu shows BASE + BOOST speeds, vm_manager.log visible at /root/
+#  TASIN VPS CONTROL PANEL v3.4 PREMIUM++
+#  v3.4: Fixed Docker lxcfs mount error, container-aware stats now DEFAULT
+#        for ALL VMs (neofetch/free show container's own RAM), fixed host
+#        CPU% and RAM display, fixed main menu layout alignment
+#  v3.3: Hosting Name prompt, Fresh VPS Start mode, premium completion screen
 #  v3.2: Hidden .tasin/ directory + per-VM subdirs, fake lscpu, CPU Intel fix
 #  v3.1: Dynamic uptime, neofetch config fix, custom host fix, faster VPS tuning
 # =====================================================
@@ -711,7 +711,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.3${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.4${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -1548,14 +1548,11 @@ create_vm() {
     elif [ "$MODE" == "shared" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM"
     elif [ "$MODE" == "fresh" ]; then
-        # Fresh VPS Start: hard limits + cgroup-aware /proc so neofetch/free
-        # show the container's OWN RAM/CPU instead of the host's.
+        # Fresh VPS Start: hard RAM/CPU limits. Container-aware stats are
+        # handled by fake free/df wrappers + neofetch override (installed for
+        # ALL VMs below), NOT by lxcfs bind mounts (which cause Docker errors
+        # when lxcfs files don't exist on the host).
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
-        # Mount lxcfs over /proc so /proc/meminfo, /proc/cpuinfo, /proc/loadavg
-        # all reflect container limits (not host totals)
-        if [ -d /var/lib/lxcfs ]; then
-            CMD="$CMD -v /var/lib/lxcfs/proc/meminfo:/proc/meminfo:rw -v /var/lib/lxcfs/proc/cpuinfo:/proc/cpuinfo:rw -v /var/lib/lxcfs/proc/loadavg:/proc/loadavg:rw -v /var/lib/lxcfs/proc/stat:/proc/stat:rw -v /var/lib/lxcfs/proc/diskstats:/proc/diskstats:rw -v /var/lib/lxcfs/proc/swaps:/proc/swaps:rw -v /var/lib/lxcfs/proc/uptime:/proc/uptime:rw"
-        fi
     fi
 
     if [ "$VM_TYPE" == "vds" ]; then
@@ -1830,15 +1827,22 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
             log_msg "Performance tuning applied to $VM_NAME"
         fi
 
-        # 3.6 FRESH VPS START MODE — make the container report its OWN resources
-        # Installs wrapper scripts for `free`, `df`, and `top` so that neofetch,
-        # free -h, df -h all show CONTAINER-level usage (not host-level).
-        # Also writes a fake /proc/meminfo overlay file if lxcfs is unavailable.
-        if [ "$FRESH_MODE" == true ]; then
-            echo -e " ${BLUE}∞${NC} Configuring Fresh VPS mode (container-aware stats)..."
-            docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
-            # Save the RAM limit (in MB) so the free-wrapper can fake MemTotal
-            local _ram_mb
+        # 3.6 CONTAINER-AWARE STATS (installed for ALL VMs by default)
+        # Installs fake `free` and `df` wrappers + neofetch memory override so
+        # that neofetch / free -h / df -h all show CONTAINER-level usage (the
+        # actual RAM the Docker container is using, e.g. 700MB) instead of the
+        # host's full RAM (e.g. 128GB). This is the DEFAULT behavior now — no
+        # need to select "Fresh VPS Start" to get it.
+        echo -e " ${BLUE}∞${NC} Configuring container-aware stats (free/df/neofetch)..."
+        docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
+
+        # Determine RAM limit in MB for ALL modes
+        local _ram_mb
+        if [ "$MODE" == "unlimited" ]; then
+            # Unlimited mode: use host's total RAM as the container's "limit"
+            _ram_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+            [ -z "$_ram_mb" ] && _ram_mb=2048
+        else
             _ram_mb=$(echo "$RAM" | tr -dc '0-9')
             local _ram_unit=$(echo "$RAM" | tr -dc 'a-zA-Z')
             case "$_ram_unit" in
@@ -1846,13 +1850,15 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
                 m|M) _ram_mb=$_ram_mb;;
                 *)   _ram_mb=$(( _ram_mb * 1024 ));;
             esac
-            docker exec "$VM_NAME" bash -c "printf '%s\n' '$_ram_mb' > /etc/tasin-spoof/ram_limit_mb" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "printf '%s\n' '$CORES' > /etc/tasin-spoof/cpu_cores" 2>/dev/null
+        fi
+        [ -z "$_ram_mb" ] && _ram_mb=2048
+        docker exec "$VM_NAME" bash -c "printf '%s\n' '$_ram_mb' > /etc/tasin-spoof/ram_limit_mb" 2>/dev/null
+        docker exec "$VM_NAME" bash -c "printf '%s\n' '${CORES:-1}' > /etc/tasin-spoof/cpu_cores" 2>/dev/null
 
-            # ─── Fake `free` wrapper: shows container's own RAM limit + actual usage ───
-            cat << 'FREE_EOF' > /tmp/_fake_free
+        # ─── Fake `free` wrapper: shows container's own RAM limit + actual usage ───
+        cat << 'FREE_EOF' > /tmp/_fake_free
 #!/bin/bash
-# TASIN fake free v3.3 — shows the container's own RAM limit + real usage
+# TASIN fake free v3.4 — shows the container's OWN RAM usage (not host's)
 RAM_LIMIT=2048
 [ -f /etc/tasin-spoof/ram_limit_mb ] && RAM_LIMIT=$(cat /etc/tasin-spoof/ram_limit_mb 2>/dev/null | head -1 | tr -dc '0-9')
 [ -z "$RAM_LIMIT" ] && RAM_LIMIT=2048
@@ -1875,12 +1881,10 @@ MEM_USED_KB=$(( MEM_USAGE_MB * 1024 ))
 MEM_FREE_KB=$(( MEM_FREE_MB * 1024 ))
 MEM_AVAIL_KB=$MEM_FREE_KB
 
-# Swap (report as 0 — fresh VPS has no swap by default)
 SWAP_TOTAL_KB=0
 SWAP_USED_KB=0
 SWAP_FREE_KB=0
 
-# Handle -h (human readable) vs default (KB)
 if [ "$1" == "-h" ] || [ "$1" == "--human" ]; then
     human() {
         local kb=$1
@@ -1901,17 +1905,14 @@ else
     printf "Swap:   %11i %11i %11i\n" "$SWAP_TOTAL_KB" "$SWAP_USED_KB" "$SWAP_FREE_KB"
 fi
 FREE_EOF
-            docker cp /tmp/_fake_free "$VM_NAME":/usr/local/bin/free
-            docker exec "$VM_NAME" chmod +x /usr/local/bin/free 2>/dev/null
-            rm -f /tmp/_fake_free
+        docker cp /tmp/_fake_free "$VM_NAME":/usr/local/bin/free
+        docker exec "$VM_NAME" chmod +x /usr/local/bin/free 2>/dev/null
+        rm -f /tmp/_fake_free
 
-            # ─── Fake `df` wrapper: shows container's disk usage (the bind-mount dir size) ───
-            cat << 'DF_EOF' > /tmp/_fake_df
+        # ─── Fake `df` wrapper: shows container's own disk usage ───
+        cat << 'DF_EOF' > /tmp/_fake_df
 #!/bin/bash
-# TASIN fake df v3.3 — shows the container's own disk usage (not host's)
-# The container's "disk" is the bind-mounted /root directory from the host.
-# We report a 50GB virtual disk and compute actual used space from du.
-
+# TASIN fake df v3.4 — shows the container's own disk usage (not host's)
 DISK_TOTAL_KB=$((50 * 1024 * 1024))   # 50 GB virtual disk
 DISK_USED_KB=$(du -sk / 2>/dev/null | awk '{print $1}')
 [ -z "$DISK_USED_KB" ] && DISK_USED_KB=0
@@ -1938,22 +1939,15 @@ else
     printf "tasin-disk    %10i %8i %10i  %3i%% /\n" "$DISK_TOTAL_KB" "$DISK_USED_KB" "$DISK_FREE_KB" "$USED_PCT"
 fi
 DF_EOF
-            docker cp /tmp/_fake_df "$VM_NAME":/usr/local/bin/df
-            docker exec "$VM_NAME" chmod +x /usr/local/bin/df 2>/dev/null
-            rm -f /tmp/_fake_df
+        docker cp /tmp/_fake_df "$VM_NAME":/usr/local/bin/df
+        docker exec "$VM_NAME" chmod +x /usr/local/bin/df 2>/dev/null
+        rm -f /tmp/_fake_df
 
-            # Ensure /usr/local/bin is first in PATH
-            docker exec "$VM_NAME" bash -c "grep -q 'usr/local/bin' /etc/profile 2>/dev/null || echo 'export PATH=/usr/local/bin:\$PATH' >> /etc/profile" 2>/dev/null
+        # Ensure /usr/local/bin is first in PATH (so our wrappers take priority)
+        docker exec "$VM_NAME" bash -c "grep -q 'usr/local/bin' /etc/profile 2>/dev/null || echo 'export PATH=/usr/local/bin:\$PATH' >> /etc/profile" 2>/dev/null
 
-            # Try to install lxcfs inside the container (best-effort — gives the most
-            # accurate /proc/meminfo / /proc/cpuinfo overlay for fresh mode)
-            if [ "$IS_FULL" = true ]; then
-                docker exec "$VM_NAME" bash -c "apt-get install -y -qq lxcfs 2>/dev/null; systemctl enable lxcfs 2>/dev/null; systemctl start lxcfs 2>/dev/null" 2>/dev/null
-            fi
-
-            log_msg "Fresh VPS mode configured for $VM_NAME (RAM=${RAM}, CPU=${CORES} cores)"
-            echo -e " ${GREEN}✔ Fresh VPS mode active — neofetch/free will show container's own resources${NC}"
-        fi
+        log_msg "Container-aware stats configured for $VM_NAME (RAM limit=${_ram_mb}MB, CPU=${CORES:-1} cores)"
+        echo -e " ${GREEN}✔ Container-aware stats active — free/neofetch show container's own RAM${NC}"
 
         # 4. Apply Network Speed Limit
         if [ -n "$NET_SPEED" ]; then
@@ -2136,6 +2130,44 @@ get_gpu() {
 get_gpu_legacy() { :; }
 GPU_CONF_EOF
         fi
+
+        # --- Memory override: shows the CONTAINER's own RAM usage (not host's) ---
+        # neofetch's default get_memory() reads /proc/meminfo which shows host RAM.
+        # This override reads cgroup memory usage so neofetch displays e.g.
+        # "Memory: 700MiB / 2048MiB" (container's real usage) instead of
+        # "Memory: 32GiB / 128GiB" (host's full RAM).
+        cat >> /tmp/_neofetch_conf << 'MEM_CONF_EOF'
+
+# Override get_memory: show container's own RAM (cgroup usage + RAM limit)
+get_memory() {
+    local ram_limit=2048
+    if [ -f /etc/tasin-spoof/ram_limit_mb ]; then
+        ram_limit=$(cat /etc/tasin-spoof/ram_limit_mb 2>/dev/null | head -1 | tr -dc '0-9')
+    fi
+    [ -z "$ram_limit" ] && ram_limit=2048
+
+    # Read real cgroup memory usage (bytes)
+    local mem_usage_b=0
+    if [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
+        mem_usage_b=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null | tr -dc '0-9')
+    elif [ -f /sys/fs/cgroup/memory.current ]; then
+        mem_usage_b=$(cat /sys/fs/cgroup/memory.current 2>/dev/null | tr -dc '0-9')
+    fi
+    [ -z "$mem_usage_b" ] && mem_usage_b=0
+
+    local mem_usage_mb=$(( mem_usage_b / 1024 / 1024 ))
+    [ "$mem_usage_mb" -gt "$ram_limit" ] && mem_usage_mb=$ram_limit
+
+    # Format as neofetch expects: "XXXMiB / YYYMiB"
+    if [ "$mem_usage_mb" -ge 1024 ]; then
+        local used_gi=$(awk "BEGIN{printf \"%.1f\", $mem_usage_mb/1024}")
+        local total_gi=$(awk "BEGIN{printf \"%.1f\", $ram_limit/1024}")
+        mem="${used_gi}GiB / ${total_gi}GiB"
+    else
+        mem="${mem_usage_mb}MiB / ${ram_limit}MiB"
+    fi
+}
+MEM_CONF_EOF
 
         # Deploy config file into container at ~/.config/neofetch/config.conf
         docker exec "$VM_NAME" mkdir -p /root/.config/neofetch 2>/dev/null
@@ -3000,10 +3032,37 @@ while true; do
     mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
 
     # ─── Gather live host stats for the dashboard ───
-    _host_cpu=$(top -bn1 2>/dev/null | awk '/^%Cpu/{print 100-$8}' | head -1 | awk '{printf "%.0f", $1}')
+    # CPU%: read /proc/stat twice (100ms apart) for an accurate delta
+    _cpu1_sum=$(awk '/^cpu /{s=0; for(i=2;i<=NF;i++) s+=$i; print s}' /proc/stat 2>/dev/null)
+    _cpu1_idle=$(awk '/^cpu /{print $5}' /proc/stat 2>/dev/null)
+    sleep 0.1
+    _cpu2_sum=$(awk '/^cpu /{s=0; for(i=2;i<=NF;i++) s+=$i; print s}' /proc/stat 2>/dev/null)
+    _cpu2_idle=$(awk '/^cpu /{print $5}' /proc/stat 2>/dev/null)
+    if [ -n "$_cpu1_sum" ] && [ -n "$_cpu2_sum" ] && [ "$_cpu2_sum" != "$_cpu1_sum" ]; then
+        _host_cpu=$(awk "BEGIN {printf \"%.0f\", (1 - ($_cpu2_idle-$_cpu1_idle)/($_cpu2_sum-$_cpu1_sum)) * 100}")
+    else
+        _host_cpu=0
+    fi
     [ -z "$_host_cpu" ] && _host_cpu=0
-    _host_mem_info=$(free -m 2>/dev/null | awk '/^Mem:/{print $2"/"$3}')
-    _host_mem_pct=$(free 2>/dev/null | awk '/^Mem:/{printf "%.0f", $3/$2*100}')
+
+    # RAM: use free -m and convert to GB for readability
+    _host_mem_total_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+    _host_mem_used_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $3}')
+    [ -z "$_host_mem_total_mb" ] && _host_mem_total_mb=0
+    [ -z "$_host_mem_used_mb" ] && _host_mem_used_mb=0
+    if [ "$_host_mem_total_mb" -ge 1024 ] 2>/dev/null; then
+        _host_mem_total=$(awk "BEGIN{printf \"%.0f\", $_host_mem_total_mb/1024}")
+        _host_mem_used=$(awk "BEGIN{printf \"%.0f\", $_host_mem_used_mb/1024}")
+        _host_mem_disp="${_host_mem_used}GB/${_host_mem_total}GB"
+    else
+        _host_mem_disp="${_host_mem_used_mb}MB/${_host_mem_total_mb}MB"
+    fi
+    if [ "$_host_mem_total_mb" -gt 0 ] 2>/dev/null; then
+        _host_mem_pct=$(awk "BEGIN{printf \"%.0f\", $_host_mem_used_mb/$_host_mem_total_mb*100}")
+    else
+        _host_mem_pct=0
+    fi
+
     _host_up_sec=$(awk '{printf "%.0f", $1}' /proc/uptime 2>/dev/null)
     _host_up_d=$((_host_up_sec / 86400))
     _host_up_h=$(( (_host_up_sec % 86400) / 3600 ))
@@ -3013,9 +3072,9 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.3${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.4${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_info}MB${NC}(${_host_mem_pct}%)  ${DIM}│${NC}  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo -e ""
 
@@ -3048,15 +3107,21 @@ while true; do
     fi
 
     echo -e ""
-    # ─── Action menu (grouped) ───
-    echo -e "  ${GREEN}┌─${NC} ${BOLD}CREATE${NC} ${GREEN}─────────────────────┐${NC}   ${PURPLE}┌─${NC} ${BOLD}PREMIUM TOOLS${NC} ${PURPLE}────────┐${NC}"
-    echo -e "  ${GREEN}│${NC}  ${GREEN}[N]${NC} ${WHITE}Create New VM${NC}            ${GREEN}│${NC}   ${PURPLE}│${NC}  ${PREMIUM}[I]${NC} ${WHITE}Show VM Info${NC}        ${PURPLE}│${NC}"
-    echo -e "  ${GREEN}│${NC}  ${ORANGE}[F]${NC} ${WHITE}Fix Docker${NC}              ${GREEN}│${NC}   ${PURPLE}│${NC}  ${PREMIUM}[E]${NC} ${WHITE}Edit Configuration${NC}  ${PURPLE}│${NC}"
-    echo -e "  ${GREEN}└────────────────────────────┘${NC}   ${PURPLE}│${NC}  ${PREMIUM}[P]${NC} ${WHITE}Live Performance${NC}    ${PURPLE}│${NC}"
-                                      echo -e "                                   ${PURPLE}└────────────────────────────┘${NC}"
-    echo -e "  ${RED}┌─${NC} ${BOLD}SYSTEM${NC} ${RED}──────────────────────┐${NC}"
-    echo -e "  ${RED}│${NC}  ${RED}[X]${NC} ${WHITE}Exit Panel${NC}              ${RED}│${NC}"
-    echo -e "  ${RED}└──────────────────────────────┘${NC}"
+    # ─── Action menu (clean single-column layout, properly aligned) ───
+    echo -e "  ${GREEN}┌─${NC} ${BOLD}CREATE & MANAGE${NC} ${GREEN}──────────────────────────┐${NC}"
+    echo -e "  ${GREEN}│${NC}  ${GREEN}[N]${NC}  ${WHITE}Create New VM${NC}                          ${GREEN}│${NC}"
+    echo -e "  ${GREEN}│${NC}  ${ORANGE}[F]${NC}  ${WHITE}Fix Docker (OverlayFS)${NC}                  ${GREEN}│${NC}"
+    echo -e "  ${GREEN}└──────────────────────────────────────────┘${NC}"
+    echo -e ""
+    echo -e "  ${PURPLE}┌─${NC} ${BOLD}PREMIUM TOOLS${NC} ${PURPLE}─────────────────────────┐${NC}"
+    echo -e "  ${PURPLE}│${NC}  ${PREMIUM}[I]${NC}  ${WHITE}Show VM Info${NC}                         ${PURPLE}│${NC}"
+    echo -e "  ${PURPLE}│${NC}  ${PREMIUM}[E]${NC}  ${WHITE}Edit Configuration${NC}                    ${PURPLE}│${NC}"
+    echo -e "  ${PURPLE}│${NC}  ${PREMIUM}[P]${NC}  ${WHITE}Live Performance Monitor${NC}              ${PURPLE}│${NC}"
+    echo -e "  ${PURPLE}└──────────────────────────────────────────┘${NC}"
+    echo -e ""
+    echo -e "  ${RED}┌─${NC} ${BOLD}SYSTEM${NC} ${RED}──────────────────────────────┐${NC}"
+    echo -e "  ${RED}│${NC}  ${RED}[X]${NC}  ${WHITE}Exit Panel${NC}                              ${RED}│${NC}"
+    echo -e "  ${RED}└──────────────────────────────────────────┘${NC}"
     echo -e ""
     echo -e "  ${GOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -ne "  ${BRIGHT_ORANGE}▶${NC} ${YELLOW}Enter VM number or command${NC} ${DIM}[N/F/I/E/P/X]${NC}: "
