@@ -1,14 +1,13 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.2 PREMIUM++
-#  Fixes: Dynamic uptime (starts 1m, grows naturally),
-#         Robust neofetch config (no syntax errors),
-#         Custom Host/BIOS model fix,
-#         Cooler manage GUI, faster VPS tuning,
-#         Hidden secret directory (.tasin/) + per-VM subdirs,
-#         Fake lscpu wrapper (fixes glitched lscpu),
-#         Custom CPU Intel fix (CRLF stripping)
+#  TASIN VPS CONTROL PANEL v3.3 PREMIUM++
+#  v3.3: Hosting Name prompt, Fresh VPS Start mode (container-aware stats),
+#        Premium completion screen with invoice + price breakdown,
+#        Redesigned main menu with live host dashboard,
+#        lscpu shows BASE + BOOST speeds, vm_manager.log visible at /root/
+#  v3.2: Hidden .tasin/ directory + per-VM subdirs, fake lscpu, CPU Intel fix
+#  v3.1: Dynamic uptime, neofetch config fix, custom host fix, faster VPS tuning
 # =====================================================
 
 # ==================================================
@@ -48,15 +47,15 @@ draw_separator() {
 # ==================================================
 #       LOG FILE SETUP
 # ==================================================
-# All TASIN internal files are hidden inside /root/.tasin/ so that
-# `ls /root` inside the VPS (and on the host) stays clean.
+# Internal files are hidden inside /root/.tasin/ so that `ls /root` stays clean.
+# EXCEPTION: vm_manager.log stays VISIBLE at /root/vm_manager.log (per user request)
 # Structure:
-#   /root/.tasin/                  — secret base (hidden, starts with .)
-#     vm_manager.log               — panel log
-#     state                        — VM state file (GITHUB_STATE_FILE)
-#     license_cache                — license cache
-#     data/<vm_name>/              — bind-mount source for each VM's /root
-#     vms/<vm_name>/cpu.info       — per-VM spoofed cpuinfo
+#   /root/vm_manager.log            — panel log (VISIBLE, not hidden)
+#   /root/.tasin/                   — secret base (hidden, starts with .)
+#     state                         — VM state file (GITHUB_STATE_FILE)
+#     license_cache                 — license cache
+#     data/<vm_name>/               — bind-mount source for each VM's /root
+#     vms/<vm_name>/cpu.info        — per-VM spoofed cpuinfo
 #     vms/<vm_name>/dmi_product.info
 #     vms/<vm_name>/dmi_vendor.info
 #     vms/<vm_name>/vm_type.info
@@ -67,9 +66,10 @@ draw_separator() {
 TASIN_BASE="/root/.tasin"
 TASIN_DATA="$TASIN_BASE/data"
 TASIN_VMS="$TASIN_BASE/vms"
-LOG_FILE="$TASIN_BASE/vm_manager.log"
+LOG_FILE="/root/vm_manager.log"   # VISIBLE log file (per user request)
 
 mkdir -p "$TASIN_BASE" "$TASIN_DATA" "$TASIN_VMS" 2>/dev/null
+touch "$LOG_FILE" 2>/dev/null
 
 log_msg() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
@@ -153,6 +153,14 @@ github_api_push() {
         -H "Accept: application/vnd.github.v3+json" \
         "$(get_api_url)?ref=${GITHUB_BRANCH}" 2>/dev/null)
 
+    # Detect 401 Bad credentials immediately (expired/revoked token)
+    if echo "$api_response" | grep -q '"message": *"Bad credentials"' 2>/dev/null; then
+        log_msg "GitHub token is INVALID or EXPIRED (401 Bad credentials). Remote sync disabled for this session."
+        log_msg "To fix: update the _K value in the script with a fresh GitHub Personal Access Token."
+        rm -f /tmp/_gh_push_resp
+        return 2   # special code = auth failure
+    fi
+
     if [ -n "$api_response" ]; then
         sha=$(echo "$api_response" | python3 -c "
 import sys, json
@@ -205,6 +213,11 @@ print(json.dumps({
     if [ "$http_code" == "200" ] || [ "$http_code" == "201" ]; then
         rm -f /tmp/_gh_push_resp
         return 0
+    elif [ "$http_code" == "401" ]; then
+        log_msg "GitHub token is INVALID or EXPIRED (401 Bad credentials). Remote sync disabled for this session."
+        log_msg "To fix: update the _K value in the script with a fresh GitHub Personal Access Token."
+        rm -f /tmp/_gh_push_resp
+        return 2   # special code = auth failure
     else
         local err_body=$(cat /tmp/_gh_push_resp 2>/dev/null)
         log_msg "Push failed HTTP $http_code: $err_body"
@@ -228,6 +241,14 @@ validate_license() {
     local remote_data=$(fetch_remote_raw)
     # If file doesn't exist yet (first run), that's OK - skip
     if [ -z "$remote_data" ]; then
+        return 0
+    fi
+
+    # Detect 401 Bad credentials (expired/revoked token) — disable remote sync gracefully
+    if echo "$remote_data" | grep -q '"message": *"Bad credentials"' 2>/dev/null; then
+        log_msg "GitHub token is INVALID or EXPIRED (401 Bad credentials). Running in LOCAL-ONLY mode."
+        log_msg "To enable remote sync: update the _K value in the script with a fresh GitHub PAT."
+        REMOTE_ENABLED=false
         return 0
     fi
 
@@ -353,18 +374,26 @@ ${new_content}"
     final_content="${final_content}
 ${hostname}|${password}|${ip}|${type}"
 
-    # Retry up to 3 times
+    # Retry up to 3 times — but bail out immediately on auth failure (401)
     local retry=0
     while [ $retry -lt 3 ]; do
-        if github_api_push "$final_content" "Add VM: $hostname"; then
+        github_api_push "$final_content" "Add VM: $hostname"
+        local rc=$?
+        if [ "$rc" -eq 0 ]; then
             log_msg "VM $hostname synced to remote."
+            return
+        elif [ "$rc" -eq 2 ]; then
+            # Auth failure — token is bad/expired. Disable remote sync for the rest of the session
+            # so VM creation is NOT blocked. The VM is still fully usable locally.
+            log_msg "Remote sync disabled (bad token). VM '$hostname' is saved locally only."
+            REMOTE_ENABLED=false
             return
         fi
         retry=$((retry+1))
         log_msg "Push retry $retry for $hostname..."
         sleep 2
     done
-    log_msg "FATAL: Could not push $hostname after 3 retries."
+    log_msg "WARNING: Could not push $hostname after 3 retries (network issue). VM is still saved locally."
 }
 
 remove_vm_from_remote() {
@@ -378,8 +407,13 @@ remove_vm_from_remote() {
 
     local new_content=$(echo "$remote_data" | grep -v "^${hostname}|")
 
-    if github_api_push "$new_content" "Remove VM: $hostname"; then
+    github_api_push "$new_content" "Remove VM: $hostname"
+    local rc=$?
+    if [ "$rc" -eq 0 ]; then
         log_msg "VM $hostname removed from remote."
+    elif [ "$rc" -eq 2 ]; then
+        # Auth failure — disable remote sync
+        REMOTE_ENABLED=false
     fi
 }
 
@@ -413,6 +447,13 @@ sync_from_remote() {
 
     local remote_data=$(fetch_remote_raw)
     if [ -z "$remote_data" ]; then
+        return
+    fi
+
+    # Detect 401 Bad credentials — stop the sync daemon from spamming errors
+    if echo "$remote_data" | grep -q '"message": *"Bad credentials"' 2>/dev/null; then
+        log_msg "Sync daemon: GitHub token expired (401). Stopping remote sync."
+        REMOTE_ENABLED=false
         return
     fi
 
@@ -670,7 +711,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.2${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.3${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -911,6 +952,23 @@ create_vm() {
     local VM_TYPE=${1:-vps}
     local REINSTALL_NAME=${2:-}
 
+    # ─── HOSTING NAME (shown on completion screen + invoice) ───
+    # Default to "MinePanel" if user just presses Enter
+    HOSTING_NAME=""
+    clear
+    echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM PROVISIONING${NC}  ${PREMIUM}PREMIUM++${NC}            ${GOLD}║${NC}"
+    echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo -e ""
+    echo -e " ${DIM}This name appears on the final VM delivery screen and invoice.${NC}"
+    echo -ne " ${YELLOW}Enter Your Hosting Name${NC} ${DIM}[default: MinePanel]${NC}: "
+    read -r HOSTING_NAME
+    HOSTING_NAME="${HOSTING_NAME//$'\r'/}"
+    HOSTING_NAME=$(echo "$HOSTING_NAME" | xargs)
+    [ -z "$HOSTING_NAME" ] && HOSTING_NAME="MinePanel"
+    echo -e " ${GREEN}✔ Hosting Name: ${CYAN}${HOSTING_NAME}${NC}"
+    sleep 1
+
     if [ -n "$REINSTALL_NAME" ]; then
         VM_ID_NAME=$REINSTALL_NAME
         clear
@@ -1028,18 +1086,41 @@ create_vm() {
     echo -e " 1) ${GREEN}Dedicated Resources${NC} (CPU + RAM Hard Limit)"
     echo -e " 2) ${YELLOW}Shared / Limit${NC} (Standard VPS, CPU + RAM)"
     echo -e " 3) ${PURPLE}System Default${NC} (Unlimited - Shows Full Host Resources)"
+    echo -e " 4) ${LIME}Fresh VPS Start${NC} (Container shows its OWN usage, not host's)"
+    echo -e "    ${DIM}→ neofetch/free -h display the container's real RAM/Disk/CPU${NC}"
     echo -e "${BLUE}────────────────────────────────────────────────────${NC}"
-    printf " Selection [1-3]: "
+    printf " Selection [1-4]: "
     read -r res_type
     res_type="${res_type//$'\r'/}"
 
     RAM=""
     CORES=""
     MODE="shared"
+    FRESH_MODE=false
 
     if [ "$res_type" == "3" ]; then
         MODE="unlimited"
         echo -e " ${PURPLE}>> System Default Selected: Using full Host Power.${NC}"
+        sleep 1
+    elif [ "$res_type" == "4" ]; then
+        # Fresh VPS Start — container sees its OWN resources, not the host's.
+        # We set a memory limit (so cgroup reports realistic RAM) and use LXCFS
+        # to make /proc/meminfo, /proc/cpuinfo, free -h, neofetch all show
+        # CONTAINER values instead of host values.
+        MODE="fresh"
+        FRESH_MODE=true
+        echo -e " ${LIME}>> Fresh VPS Start Selected.${NC}"
+        echo -e " ${DIM}   neofetch / free -h will show the container's own RAM & CPU usage.${NC}"
+        echo -e ""
+        echo -n " Enter RAM limit (e.g. 2g, 4g, 8g) [default 2g]: "
+        read -r RAM
+        if [ -z "$RAM" ]; then RAM="2g"; fi
+        RAM=$(echo "$RAM" | tr -d '[:space:]')
+
+        echo -n " Enter CPU Cores (e.g. 1, 2, 4) [default 2]: "
+        read -r CORES
+        if [ -z "$CORES" ]; then CORES="2"; fi
+        CORES=$(echo "$CORES" | tr -d '[:space:]')
         sleep 1
     else
         echo -n " Enter RAM (e.g. 1g, 4g, 8g): "
@@ -1466,6 +1547,15 @@ create_vm() {
         CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
     elif [ "$MODE" == "shared" ]; then
         CMD="$CMD --cpus=$CORES --memory=$RAM"
+    elif [ "$MODE" == "fresh" ]; then
+        # Fresh VPS Start: hard limits + cgroup-aware /proc so neofetch/free
+        # show the container's OWN RAM/CPU instead of the host's.
+        CMD="$CMD --cpus=$CORES --memory=$RAM --memory-swap=$RAM"
+        # Mount lxcfs over /proc so /proc/meminfo, /proc/cpuinfo, /proc/loadavg
+        # all reflect container limits (not host totals)
+        if [ -d /var/lib/lxcfs ]; then
+            CMD="$CMD -v /var/lib/lxcfs/proc/meminfo:/proc/meminfo:rw -v /var/lib/lxcfs/proc/cpuinfo:/proc/cpuinfo:rw -v /var/lib/lxcfs/proc/loadavg:/proc/loadavg:rw -v /var/lib/lxcfs/proc/stat:/proc/stat:rw -v /var/lib/lxcfs/proc/diskstats:/proc/diskstats:rw -v /var/lib/lxcfs/proc/swaps:/proc/swaps:rw -v /var/lib/lxcfs/proc/uptime:/proc/uptime:rw"
+        fi
     fi
 
     if [ "$VM_TYPE" == "vds" ]; then
@@ -1740,6 +1830,131 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
             log_msg "Performance tuning applied to $VM_NAME"
         fi
 
+        # 3.6 FRESH VPS START MODE — make the container report its OWN resources
+        # Installs wrapper scripts for `free`, `df`, and `top` so that neofetch,
+        # free -h, df -h all show CONTAINER-level usage (not host-level).
+        # Also writes a fake /proc/meminfo overlay file if lxcfs is unavailable.
+        if [ "$FRESH_MODE" == true ]; then
+            echo -e " ${BLUE}∞${NC} Configuring Fresh VPS mode (container-aware stats)..."
+            docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
+            # Save the RAM limit (in MB) so the free-wrapper can fake MemTotal
+            local _ram_mb
+            _ram_mb=$(echo "$RAM" | tr -dc '0-9')
+            local _ram_unit=$(echo "$RAM" | tr -dc 'a-zA-Z')
+            case "$_ram_unit" in
+                g|G) _ram_mb=$(( _ram_mb * 1024 ));;
+                m|M) _ram_mb=$_ram_mb;;
+                *)   _ram_mb=$(( _ram_mb * 1024 ));;
+            esac
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '$_ram_mb' > /etc/tasin-spoof/ram_limit_mb" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '$CORES' > /etc/tasin-spoof/cpu_cores" 2>/dev/null
+
+            # ─── Fake `free` wrapper: shows container's own RAM limit + actual usage ───
+            cat << 'FREE_EOF' > /tmp/_fake_free
+#!/bin/bash
+# TASIN fake free v3.3 — shows the container's own RAM limit + real usage
+RAM_LIMIT=2048
+[ -f /etc/tasin-spoof/ram_limit_mb ] && RAM_LIMIT=$(cat /etc/tasin-spoof/ram_limit_mb 2>/dev/null | head -1 | tr -dc '0-9')
+[ -z "$RAM_LIMIT" ] && RAM_LIMIT=2048
+
+# Read real cgroup memory usage (in bytes) — this is what the container ACTUALLY uses
+MEM_USAGE_B=0
+if [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
+    MEM_USAGE_B=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null | tr -dc '0-9')
+elif [ -f /sys/fs/cgroup/memory.current ]; then
+    MEM_USAGE_B=$(cat /sys/fs/cgroup/memory.current 2>/dev/null | tr -dc '0-9')
+fi
+[ -z "$MEM_USAGE_B" ] && MEM_USAGE_B=0
+MEM_USAGE_MB=$(( MEM_USAGE_B / 1024 / 1024 ))
+[ "$MEM_USAGE_MB" -gt "$RAM_LIMIT" ] && MEM_USAGE_MB=$RAM_LIMIT
+
+MEM_FREE_MB=$(( RAM_LIMIT - MEM_USAGE_MB ))
+[ "$MEM_FREE_MB" -lt 0 ] && MEM_FREE_MB=0
+MEM_TOTAL_KB=$(( RAM_LIMIT * 1024 ))
+MEM_USED_KB=$(( MEM_USAGE_MB * 1024 ))
+MEM_FREE_KB=$(( MEM_FREE_MB * 1024 ))
+MEM_AVAIL_KB=$MEM_FREE_KB
+
+# Swap (report as 0 — fresh VPS has no swap by default)
+SWAP_TOTAL_KB=0
+SWAP_USED_KB=0
+SWAP_FREE_KB=0
+
+# Handle -h (human readable) vs default (KB)
+if [ "$1" == "-h" ] || [ "$1" == "--human" ]; then
+    human() {
+        local kb=$1
+        if [ "$kb" -ge 1048576 ]; then
+            awk "BEGIN{printf \"%.1fGi\", $kb/1048576}"
+        elif [ "$kb" -ge 1024 ]; then
+            awk "BEGIN{printf \"%.0fMi\", $kb/1024}"
+        else
+            printf "%iKi" "$kb"
+        fi
+    }
+    printf "               total        used        free      shared  buff/cache   available\n"
+    printf "Mem:    %10s %10s %10s %10s %10s %10s\n" "$(human $MEM_TOTAL_KB)" "$(human $MEM_USED_KB)" "$(human $MEM_FREE_KB)" "0B" "0B" "$(human $MEM_AVAIL_KB)"
+    printf "Swap:   %10s %10s %10s\n" "$(human $SWAP_TOTAL_KB)" "$(human $SWAP_USED_KB)" "$(human $SWAP_FREE_KB)"
+else
+    printf "              total        used        free      shared  buff/cache   available\n"
+    printf "Mem:    %11i %11i %11i %11i %11i %11i\n" "$MEM_TOTAL_KB" "$MEM_USED_KB" "$MEM_FREE_KB" 0 0 "$MEM_AVAIL_KB"
+    printf "Swap:   %11i %11i %11i\n" "$SWAP_TOTAL_KB" "$SWAP_USED_KB" "$SWAP_FREE_KB"
+fi
+FREE_EOF
+            docker cp /tmp/_fake_free "$VM_NAME":/usr/local/bin/free
+            docker exec "$VM_NAME" chmod +x /usr/local/bin/free 2>/dev/null
+            rm -f /tmp/_fake_free
+
+            # ─── Fake `df` wrapper: shows container's disk usage (the bind-mount dir size) ───
+            cat << 'DF_EOF' > /tmp/_fake_df
+#!/bin/bash
+# TASIN fake df v3.3 — shows the container's own disk usage (not host's)
+# The container's "disk" is the bind-mounted /root directory from the host.
+# We report a 50GB virtual disk and compute actual used space from du.
+
+DISK_TOTAL_KB=$((50 * 1024 * 1024))   # 50 GB virtual disk
+DISK_USED_KB=$(du -sk / 2>/dev/null | awk '{print $1}')
+[ -z "$DISK_USED_KB" ] && DISK_USED_KB=0
+[ "$DISK_USED_KB" -gt "$DISK_TOTAL_KB" ] && DISK_USED_KB=$DISK_TOTAL_KB
+DISK_FREE_KB=$(( DISK_TOTAL_KB - DISK_USED_KB ))
+USED_PCT=$(( DISK_USED_KB * 100 / DISK_TOTAL_KB ))
+[ "$USED_PCT" -gt 100 ] && USED_PCT=100
+
+if [ "$1" == "-h" ] || [ "$1" == "--human" ]; then
+    human() {
+        local kb=$1
+        if [ "$kb" -ge 1048576 ]; then
+            awk "BEGIN{printf \"%.1fG\", $kb/1048576}"
+        elif [ "$kb" -ge 1024 ]; then
+            awk "BEGIN{printf \"%.0fM\", $kb/1024}"
+        else
+            printf "%iK" "$kb"
+        fi
+    }
+    printf "Filesystem      Size  Used Avail Use%% Mounted on\n"
+    printf "tasin-disk     %5s %5s %5s  %3i%% /\n" "$(human $DISK_TOTAL_KB)" "$(human $DISK_USED_KB)" "$(human $DISK_FREE_KB)" "$USED_PCT"
+else
+    printf "Filesystem     1K-blocks    Used Available Use%% Mounted on\n"
+    printf "tasin-disk    %10i %8i %10i  %3i%% /\n" "$DISK_TOTAL_KB" "$DISK_USED_KB" "$DISK_FREE_KB" "$USED_PCT"
+fi
+DF_EOF
+            docker cp /tmp/_fake_df "$VM_NAME":/usr/local/bin/df
+            docker exec "$VM_NAME" chmod +x /usr/local/bin/df 2>/dev/null
+            rm -f /tmp/_fake_df
+
+            # Ensure /usr/local/bin is first in PATH
+            docker exec "$VM_NAME" bash -c "grep -q 'usr/local/bin' /etc/profile 2>/dev/null || echo 'export PATH=/usr/local/bin:\$PATH' >> /etc/profile" 2>/dev/null
+
+            # Try to install lxcfs inside the container (best-effort — gives the most
+            # accurate /proc/meminfo / /proc/cpuinfo overlay for fresh mode)
+            if [ "$IS_FULL" = true ]; then
+                docker exec "$VM_NAME" bash -c "apt-get install -y -qq lxcfs 2>/dev/null; systemctl enable lxcfs 2>/dev/null; systemctl start lxcfs 2>/dev/null" 2>/dev/null
+            fi
+
+            log_msg "Fresh VPS mode configured for $VM_NAME (RAM=${RAM}, CPU=${CORES} cores)"
+            echo -e " ${GREEN}✔ Fresh VPS mode active — neofetch/free will show container's own resources${NC}"
+        fi
+
         # 4. Apply Network Speed Limit
         if [ -n "$NET_SPEED" ]; then
             echo -e " ${BLUE}∞${NC} Applying network speed limit..."
@@ -1950,26 +2165,46 @@ GPU_CONF_EOF
             docker exec "$VM_NAME" bash -c "printf '%s\n' '$V_ID' > /etc/tasin-spoof/cpu_vendor" 2>/dev/null
             docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_NAME' > /etc/tasin-spoof/cpu_name" 2>/dev/null
             docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_MHZ' > /etc/tasin-spoof/cpu_mhz" 2>/dev/null
+            # Save base + boost speeds so the fake lscpu can show BOTH
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_BASE_MHZ' > /etc/tasin-spoof/cpu_base_mhz" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_BOOST_MHZ' > /etc/tasin-spoof/cpu_boost_mhz" 2>/dev/null
+            # Save whether boost is enabled (1=yes, 0=no)
+            local _boost_flag=0
+            if [[ "$boost_yes" == "y" ]]; then _boost_flag=1; fi
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '$_boost_flag' > /etc/tasin-spoof/cpu_boost_enabled" 2>/dev/null
 
             # Build the fake lscpu wrapper on the host, then copy into container
             cat << 'LSCPU_EOF' > /tmp/_fake_lscpu
 #!/bin/bash
-# TASIN fake lscpu v3.2 — reads spoofed /proc/cpuinfo + /etc/tasin-spoof/
-# Outputs in the same format as the real lscpu so neofetch / hwinfo / monitoring
-# tools all see the spoofed CPU model.
+# TASIN fake lscpu v3.3 — reads spoofed /proc/cpuinfo + /etc/tasin-spoof/
+# Shows BASE SPEED and BOOST SPEED (when boost is enabled) so the user
+# can verify their clock speed boost choice is active.
 
 # Read from spoof files (written by TASIN panel)
 VENDOR=""
 MODEL=""
 MHZ=""
+BASE_MHZ=""
+BOOST_MHZ=""
+BOOST_EN=0
 [ -f /etc/tasin-spoof/cpu_vendor ] && VENDOR=$(cat /etc/tasin-spoof/cpu_vendor 2>/dev/null | head -1 | tr -d '\r\n')
 [ -f /etc/tasin-spoof/cpu_name ]   && MODEL=$(cat /etc/tasin-spoof/cpu_name 2>/dev/null | head -1 | tr -d '\r\n')
 [ -f /etc/tasin-spoof/cpu_mhz ]    && MHZ=$(cat /etc/tasin-spoof/cpu_mhz 2>/dev/null | head -1 | tr -d '\r\n')
+[ -f /etc/tasin-spoof/cpu_base_mhz ]  && BASE_MHZ=$(cat /etc/tasin-spoof/cpu_base_mhz 2>/dev/null | head -1 | tr -d '\r\n')
+[ -f /etc/tasin-spoof/cpu_boost_mhz ] && BOOST_MHZ=$(cat /etc/tasin-spoof/cpu_boost_mhz 2>/dev/null | head -1 | tr -d '\r\n')
+[ -f /etc/tasin-spoof/cpu_boost_enabled ] && BOOST_EN=$(cat /etc/tasin-spoof/cpu_boost_enabled 2>/dev/null | head -1 | tr -d '\r\n')
 
 # Fallback: parse /proc/cpuinfo (spoofed via bind mount)
 [ -z "$VENDOR" ] && VENDOR=$(grep -m1 '^vendor_id' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
 [ -z "$MODEL" ]  && MODEL=$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
 [ -z "$MHZ" ]    && MHZ=$(grep -m1 '^cpu MHz' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+[ -z "$BASE_MHZ" ]  && BASE_MHZ="$MHZ"
+[ -z "$BOOST_MHZ" ] && BOOST_MHZ="$MHZ"
+
+# Convert MHz → GHz for nicer display
+base_ghz=$(awk "BEGIN{printf \"%.2f\", ${BASE_MHZ}/1000}" 2>/dev/null)
+boost_ghz=$(awk "BEGIN{printf \"%.2f\", ${BOOST_MHZ}/1000}" 2>/dev/null)
+cur_ghz=$(awk "BEGIN{printf \"%.2f\", ${MHZ}/1000}" 2>/dev/null)
 
 # Count cores from /proc/cpuinfo
 CORES=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
@@ -2008,6 +2243,8 @@ if [ "$1" == "-J" ] || [ "$1" == "--json" ]; then
       {"field": "Core(s) per socket:", "data": "$CORES_PER_SOCKET"},
       {"field": "Socket(s):", "data": "$SOCKETS"},
       {"field": "Stepping:", "data": "10"},
+      {"field": "CPU base MHz:", "data": "$BASE_MHZ"},
+      {"field": "CPU boost MHz:", "data": "$BOOST_MHZ"},
       {"field": "CPU max MHz:", "data": "$MHZ"},
       {"field": "CPU min MHz:", "data": "800.0000"},
       {"field": "BogoMIPS:", "data": "$MHZ"},
@@ -2048,6 +2285,8 @@ echo "Thread(s) per core:  $THREADS_PER_CORE"
 echo "Core(s) per socket:  $CORES_PER_SOCKET"
 echo "Socket(s):           $SOCKETS"
 echo "Stepping:            10"
+echo "CPU base MHz:        $BASE_MHZ"
+echo "CPU boost MHz:       $BOOST_MHZ"
 echo "CPU max MHz:         $MHZ"
 echo "CPU min MHz:         800.0000"
 echo "BogoMIPS:            $MHZ"
@@ -2060,6 +2299,20 @@ echo "L2 cache:            2 MiB"
 echo "L3 cache:            32 MiB"
 echo "NUMA node(s):        1"
 echo "NUMA node0 CPU(s):   0-$((CORES-1))"
+# ─── Clock speed detail block (shows BASE and BOOST clearly) ───
+echo ""
+echo "─────────────────────────────────────────────"
+echo "  CLOCK SPEED"
+echo "─────────────────────────────────────────────"
+echo "  Base Speed:    $base_ghz GHz  ($BASE_MHZ MHz)"
+if [ "$BOOST_EN" == "1" ]; then
+    echo "  Boosted Speed: $boost_ghz GHz  ($BOOST_MHZ MHz)  [ACTIVE]"
+    echo "  Current:       $cur_ghz GHz  ($MHZ MHz)"
+else
+    echo "  Boost Speed:   $boost_ghz GHz  ($BOOST_MHZ MHz)  [disabled]"
+    echo "  Current:       $cur_ghz GHz  ($MHZ MHz)  [base]"
+fi
+echo "─────────────────────────────────────────────"
 exit 0
 LSCPU_EOF
             docker cp /tmp/_fake_lscpu "$VM_NAME":/usr/local/bin/lscpu
@@ -2214,8 +2467,131 @@ LSHWEOF
         fi
 
         echo -e " ${GREEN}✔ VM Installed Successfully!${NC}"
-        echo -e " Redirecting to manager..."
-        sleep 2
+
+        # ==========================================
+        # PREMIUM COMPLETION SCREEN (invoice + details)
+        # ==========================================
+        # Gather details for the delivery screen
+        local _final_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$VM_NAME" 2>/dev/null)
+        [ -z "$_final_ip" ] && _final_ip="N/A"
+
+        # CPU display string
+        local _cpu_display="${DIM}Host CPU${NC}"
+        if [ "$USE_SPOOF" = true ]; then
+            local _cghz=$(awk "BEGIN{printf \"%.1f\", ${C_MHZ}/1000}")
+            _cpu_display="${CYAN}${C_NAME}${NC} @ ${_cghz}GHz"
+        fi
+
+        # GPU display string
+        local _gpu_display="${DIM}None${NC}"
+        if [ -n "$GPU_SPOOF_NAME" ]; then
+            local _ggb=$((GPU_SPOOF_VRAM / 1024))
+            _gpu_display="${CYAN}${GPU_SPOOF_NAME}${NC} ${DIM}[${_ggb}GB]${NC}"
+        fi
+
+        # RAM / Disk display
+        local _ram_display="${CYAN}${RAM}${NC}"
+        local _disk_display="${CYAN}50GB${NC}"
+        if [ "$MODE" == "unlimited" ]; then
+            _ram_display="${DIM}Unlimited (Host)${NC}"
+        elif [ "$MODE" == "fresh" ]; then
+            _ram_display="${LIME}${RAM}${NC} ${DIM}(Fresh)${NC}"
+        fi
+
+        # Speed display
+        local _speed_display="${DIM}Unlimited${NC}"
+        if [ -n "$NET_SPEED" ]; then
+            if [ "$NET_SPEED" -ge 1000 ]; then
+                _speed_display="${CYAN}$((NET_SPEED/1000))Gbps${NC}"
+            else
+                _speed_display="${CYAN}${NET_SPEED}Mbps${NC}"
+            fi
+        fi
+
+        # ─── Price calculation (monthly USD) ───
+        # Base prices per resource
+        local _price_cpu=0      # $2 per core
+        local _price_ram=0      # $3 per GB
+        local _price_disk=5     # base 50GB = $5
+        local _price_speed=0    # $1 per 100Mbps
+        local _price_gpu=0      # $15 if GPU present
+        local _price_type=0     # VDS surcharge $10
+
+        # CPU price
+        if [ -n "$CORES" ] && [[ "$CORES" =~ ^[0-9]+$ ]]; then
+            _price_cpu=$(( CORES * 2 ))
+        fi
+
+        # RAM price (parse GB)
+        local _ram_gb=0
+        local _ram_num=$(echo "$RAM" | tr -dc '0-9')
+        local _ram_u=$(echo "$RAM" | tr -dc 'a-zA-Z')
+        case "$_ram_u" in
+            g|G) _ram_gb=$_ram_num;;
+            m|M) _ram_gb=$(( _ram_num / 1024 ));;
+            *)   _ram_gb=$_ram_num;;
+        esac
+        [ "$_ram_gb" -lt 1 ] && _ram_gb=1
+        _price_ram=$(( _ram_gb * 3 ))
+
+        # Speed price
+        if [ -n "$NET_SPEED" ] && [[ "$NET_SPEED" =~ ^[0-9]+$ ]]; then
+            _price_speed=$(( NET_SPEED / 100 ))
+        fi
+
+        # GPU price
+        if [ -n "$GPU_SPOOF_NAME" ]; then
+            _price_gpu=15
+        fi
+
+        # VDS surcharge
+        if [ "$VM_TYPE" == "vds" ]; then
+            _price_type=10
+        fi
+
+        local _price_total=$(( _price_cpu + _price_ram + _price_disk + _price_speed + _price_gpu + _price_type ))
+
+        # OS name
+        local _os_display="${CYAN}${IMG}${NC}"
+
+        # ─── Render the premium completion screen ───
+        clear
+        echo -e "${GOLD}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e ""
+        echo -e "        ${BRIGHT_ORANGE}${BOLD}${HOSTING_NAME}${NC} ${PREMIUM}The Premium VPS Provider${NC}"
+        echo -e ""
+        echo -e "        ${GREEN}${BOLD}✔ VPS DEPLOYED SUCCESSFULLY${NC}"
+        echo -e ""
+        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+        echo -e "  ${BOLD}VM DETAILS${NC}"
+        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+        echo -e "  ${WHITE}Hostname:${NC}       ${CYAN}${VM_ID_NAME}${NC}"
+        echo -e "  ${WHITE}VM Type:${NC}        ${CYAN}${VM_TYPE^^}${NC}"
+        echo -e "  ${WHITE}IP Address:${NC}     ${CYAN}${_final_ip}${NC}"
+        echo -e "  ${WHITE}OS Image:${NC}       ${CYAN}${IMG}${NC}"
+        echo -e "  ${WHITE}CPU:${NC}             ${_cpu_display}"
+        echo -e "  ${WHITE}RAM:${NC}             ${_ram_display}"
+        echo -e "  ${WHITE}Disk:${NC}            ${_disk_display}"
+        echo -e "  ${WHITE}Network:${NC}        ${_speed_display}"
+        echo -e "  ${WHITE}GPU:${NC}             ${_gpu_display}"
+        echo -e "  ${WHITE}Root Password:${NC}   ${RED}${VM_PASS}${NC}"
+        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+        echo -e "  ${BOLD}INVOICE — Monthly Breakdown${NC}"
+        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+        printf  "  ${WHITE}CPU${NC} (%s cores)              ${GREEN}\$%i${NC}/mo\n" "$CORES" "$_price_cpu"
+        printf  "  ${WHITE}RAM${NC} (%sGB)                   ${GREEN}\$%i${NC}/mo\n" "$_ram_gb" "$_price_ram"
+        printf  "  ${WHITE}Disk${NC} (50GB SSD)              ${GREEN}\$%i${NC}/mo\n" "$_price_disk"
+        printf  "  ${WHITE}Network${NC}                      ${GREEN}\$%i${NC}/mo\n" "$_price_speed"
+        printf  "  ${WHITE}GPU${NC}                          ${GREEN}\$%i${NC}/mo\n" "$_price_gpu"
+        printf  "  ${WHITE}VDS Surcharge${NC}                ${GREEN}\$%i${NC}/mo\n" "$_price_type"
+        echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
+        printf  "  ${BOLD}TOTAL PRICE${NC}                   ${GOLD}${BOLD}\$%i${NC}${BOLD}/mo${NC}\n" "$_price_total"
+        echo -e "${GOLD}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e ""
+        echo -e "  ${DIM}Your VPS is ready. Connect with: docker exec -it ${VM_NAME} /bin/bash${NC}"
+        echo -e ""
+        echo -ne "  ${BRIGHT_ORANGE}▶${NC} ${YELLOW}Press ENTER to continue to the VM manager...${NC}"
+        read -r _enter_to_continue
         manage_vm_menu "$VM_NAME"
     else
         log_msg "ERROR: Container creation failed. $DOCKER_ERR"
@@ -2584,9 +2960,10 @@ migrate_to_hidden_dir() {
         log_msg "Migration: moved $d to $TASIN_DATA/$name"
     done
 
-    # 3. Migrate old log/state/license files
-    [ -f "/root/vm_manager.log" ] && [ ! -f "$TASIN_BASE/vm_manager.log" ] && \
-        mv "/root/vm_manager.log" "$TASIN_BASE/vm_manager.log" 2>/dev/null
+    # 3. Migrate old state/license files (log stays at /root/vm_manager.log — visible)
+    # If a previous version hid the log inside .tasin/, bring it back out to /root/
+    [ -f "$TASIN_BASE/vm_manager.log" ] && [ ! -f "/root/vm_manager.log" ] && \
+        mv "$TASIN_BASE/vm_manager.log" "/root/vm_manager.log" 2>/dev/null
     [ -f "/root/.vm_remote_state" ] && [ ! -f "$TASIN_BASE/state" ] && \
         mv "/root/.vm_remote_state" "$TASIN_BASE/state" 2>/dev/null
     [ -f "/root/.vm_license_cache" ] && [ ! -f "$TASIN_BASE/license_cache" ] && \
@@ -2622,42 +2999,67 @@ while true; do
     clear
     mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
 
-    draw_banner
+    # ─── Gather live host stats for the dashboard ───
+    _host_cpu=$(top -bn1 2>/dev/null | awk '/^%Cpu/{print 100-$8}' | head -1 | awk '{printf "%.0f", $1}')
+    [ -z "$_host_cpu" ] && _host_cpu=0
+    _host_mem_info=$(free -m 2>/dev/null | awk '/^Mem:/{print $2"/"$3}')
+    _host_mem_pct=$(free 2>/dev/null | awk '/^Mem:/{printf "%.0f", $3/$2*100}')
+    _host_up_sec=$(awk '{printf "%.0f", $1}' /proc/uptime 2>/dev/null)
+    _host_up_d=$((_host_up_sec / 86400))
+    _host_up_h=$(( (_host_up_sec % 86400) / 3600 ))
+    _host_up_m=$(( (_host_up_sec % 3600) / 60 ))
+    _host_up_str="${_host_up_d}d ${_host_up_h}h ${_host_up_m}m"
+    _net_status="${GREEN}ONLINE${NC}"
+
+    # ─── Premium header with host status bar ───
+    echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.3${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_info}MB${NC}(${_host_mem_pct}%)  ${DIM}│${NC}  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
+    echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo -e ""
 
     if [ ${#VMS[@]} -eq 0 ]; then
-        echo -e "  ${DIM}░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░${NC}"
-        echo -e "  ${YELLOW}  No VMs created yet. Press [N] to create one.${NC}"
-        echo -e "  ${DIM}░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░${NC}"
-    else
         echo -e "  ${DIM}┌──────────────────────────────────────────────────┐${NC}"
-        echo -e "  ${DIM}│${NC}  ${BOLD} #  ${UNDERLINE}NAME${NC}              ${UNDERLINE}TYPE${NC}    ${UNDERLINE}STATUS${NC}         ${DIM}│${NC}"
-        echo -e "  ${GOLD}├──────────────────────────────────────────────────┤${NC}"
+        echo -e "  ${DIM}│${NC}  ${YELLOW}No VMs created yet.${NC}                              ${DIM}│${NC}"
+        echo -e "  ${DIM}│${NC}  ${DIM}Press ${GREEN}[N]${NC}${DIM} to deploy your first virtual machine.${NC}      ${DIM}│${NC}"
+        echo -e "  ${DIM}└──────────────────────────────────────────────────┘${NC}"
+    else
+        echo -e "  ${BLUE}┌──┬──────────────────────────┬──────┬───────────────┐${NC}"
+        echo -e "  ${BLUE}│${NC}${BOLD} #${NC}  ${BOLD}VM NAME${NC}                   ${BOLD}TYPE${NC}   ${BOLD}STATUS${NC}        ${BLUE}│${NC}"
+        echo -e "  ${BLUE}├──┼──────────────────────────┼──────┼───────────────┤${NC}"
         i=1
         for vm in "${VMS[@]}"; do
             STATE=$(get_status "$vm")
             DISPLAY_NAME=${vm#tasin-vm-}
 
             if [ -f "/root/.tasin/vms/$DISPLAY_NAME/vm_type.info" ] && [ "$(cat /root/.tasin/vms/$DISPLAY_NAME/vm_type.info)" == "vds" ]; then
-                TYPE_TAG="${PURPLE}VDS${NC}   "
+                TYPE_TAG="${PURPLE}VDS${NC}"
             else
-                TYPE_TAG="${GREEN}VPS${NC}   "
+                TYPE_TAG="${GREEN}VPS${NC}"
             fi
 
-            pad_name=$(printf '%-18s' "$DISPLAY_NAME")
-            echo -e "  ${DIM}│${NC}  ${WHITE}[$i]${NC} ${CYAN}${pad_name}${NC} ${TYPE_TAG} $STATE   ${DIM}│${NC}"
+            pad_name=$(printf '%-24s' "$DISPLAY_NAME")
+            pad_num=$(printf '%-2s' "$i")
+            echo -e "  ${BLUE}│${NC} ${WHITE}${pad_num}${NC} ${CYAN}${pad_name}${NC} ${TYPE_TAG}  $STATE     ${BLUE}│${NC}"
             ((i++))
         done
-        echo -e "  ${DIM}└──────────────────────────────────────────────────┘${NC}"
+        echo -e "  ${BLUE}└──┴──────────────────────────┴──────┴───────────────┘${NC}"
     fi
 
     echo -e ""
-    draw_separator
-    echo -e "  ${GREEN}[N]${NC} Create New VM              ${PREMIUM}[I]${NC} Show VM Info"
-    echo -e "  ${ORANGE}[F]${NC} Fix Docker                 ${PREMIUM}[E]${NC} Edit Config"
-    echo -e "  ${RED}[X]${NC} Exit Panel                 ${PREMIUM}[P]${NC} Live Performance"
-    draw_separator
-    echo -n -e " ${YELLOW}Enter Number or command${NC} ${DIM}[N/F/X/I/E/P]${NC}: "
+    # ─── Action menu (grouped) ───
+    echo -e "  ${GREEN}┌─${NC} ${BOLD}CREATE${NC} ${GREEN}─────────────────────┐${NC}   ${PURPLE}┌─${NC} ${BOLD}PREMIUM TOOLS${NC} ${PURPLE}────────┐${NC}"
+    echo -e "  ${GREEN}│${NC}  ${GREEN}[N]${NC} ${WHITE}Create New VM${NC}            ${GREEN}│${NC}   ${PURPLE}│${NC}  ${PREMIUM}[I]${NC} ${WHITE}Show VM Info${NC}        ${PURPLE}│${NC}"
+    echo -e "  ${GREEN}│${NC}  ${ORANGE}[F]${NC} ${WHITE}Fix Docker${NC}              ${GREEN}│${NC}   ${PURPLE}│${NC}  ${PREMIUM}[E]${NC} ${WHITE}Edit Configuration${NC}  ${PURPLE}│${NC}"
+    echo -e "  ${GREEN}└────────────────────────────┘${NC}   ${PURPLE}│${NC}  ${PREMIUM}[P]${NC} ${WHITE}Live Performance${NC}    ${PURPLE}│${NC}"
+                                      echo -e "                                   ${PURPLE}└────────────────────────────┘${NC}"
+    echo -e "  ${RED}┌─${NC} ${BOLD}SYSTEM${NC} ${RED}──────────────────────┐${NC}"
+    echo -e "  ${RED}│${NC}  ${RED}[X]${NC} ${WHITE}Exit Panel${NC}              ${RED}│${NC}"
+    echo -e "  ${RED}└──────────────────────────────┘${NC}"
+    echo -e ""
+    echo -e "  ${GOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -ne "  ${BRIGHT_ORANGE}▶${NC} ${YELLOW}Enter VM number or command${NC} ${DIM}[N/F/I/E/P/X]${NC}: "
     read -r CHOICE
 
 
