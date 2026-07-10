@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.6 PREMIUM++
+#  TASIN VPS CONTROL PANEL v3.6.1 PREMIUM++
+#  v3.6.1: Fixed login screen 'read: Illegal option -s' (POSIX sh compatibility)
 #  v3.6: Pre-boot summary screen (Enter to boot), live boot log streaming,
 #        OS-specific login screen (Ubuntu/Debian/Kali/Alpine welcome + prompt)
 #  v3.5: Fixed VM boot failure (--init conflicts with systemd images)
@@ -1840,9 +1841,18 @@ while [ "$TRIES" -lt "$MAX_TRIES" ]; do
         continue
     fi
 
-    # Read password (hidden)
+    # Read password (hidden) — POSIX-compatible (no 'read -s' which is bash-only)
     printf "Password: "
-    read -rs PASSWORD
+    # Save current tty settings, disable echo, read password, restore tty
+    if command -v stty >/dev/null 2>&1; then
+        stty_save=$(stty -g 2>/dev/null)
+        stty -echo 2>/dev/null
+        read -r PASSWORD
+        stty "$stty_save" 2>/dev/null
+    else
+        # Fallback: no stty available (rare), read visibly
+        read -r PASSWORD
+    fi
     echo ""
 
     # Validate
