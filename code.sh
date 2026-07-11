@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.8 PREMIUM++
-#  v3.8: lscpu now categorized (Virtualization/Caches/NUMA/Vulnerabilities),
-#        neofetch shows Host + Terminal + CPU @ X.XXXGHz via print_info override
+#  TASIN VPS CONTROL PANEL v3.9 PREMIUM++
+#  v3.9: lscpu matches real format (indented sub-items, Flags, full Vulnerabilities),
+#        fake free/df/neofetch memory ONLY for Fresh mode (System Default shows real RAM)
+#  v3.8: lscpu categorized, neofetch shows Host + Terminal + CPU @ X.XXXGHz
 #  v3.7: Boot logs replace 'Waiting' text, Connect shows login credentials,
 #        installs wget/sudo/nano + sqlfixer script, removes 'up' from uptime
 #  v3.6: Pre-boot summary screen, live boot log streaming, OS-specific login
@@ -39,7 +40,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.8${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.9${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -717,7 +718,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.8${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.9${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -2137,12 +2138,13 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
             log_msg "Performance tuning applied to $VM_NAME"
         fi
 
-        # 3.6 CONTAINER-AWARE STATS (installed for ALL VMs by default)
+        # 3.6 CONTAINER-AWARE STATS (ONLY for Fresh VPS Start mode — option 4)
         # Installs fake `free` and `df` wrappers + neofetch memory override so
         # that neofetch / free -h / df -h all show CONTAINER-level usage (the
         # actual RAM the Docker container is using, e.g. 700MB) instead of the
-        # host's full RAM (e.g. 128GB). This is the DEFAULT behavior now — no
-        # need to select "Fresh VPS Start" to get it.
+        # host's full RAM. Only applies when user selects "Fresh VPS Start".
+        # For System Default / Dedicated / Shared: REAL host RAM/disk is shown.
+        if [ "$FRESH_MODE" == true ]; then
         echo -e " ${BLUE}∞${NC} Configuring container-aware stats (free/df/neofetch)..."
         docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
 
@@ -2267,6 +2269,7 @@ DF_EOF
 
         log_msg "Container-aware stats configured for $VM_NAME (RAM limit=${_ram_mb}MB, CPU=${CORES:-1} cores)"
         echo -e " ${GREEN}✔ Container-aware stats active — free/neofetch show container's own RAM${NC}"
+        fi
 
         # 4. Apply Network Speed Limit
         if [ -n "$NET_SPEED" ]; then
@@ -2463,10 +2466,9 @@ GPU_CONF_EOF
         fi
 
         # --- Memory override: shows the CONTAINER's own RAM usage (not host's) ---
-        # neofetch's default get_memory() reads /proc/meminfo which shows host RAM.
-        # This override reads cgroup memory usage so neofetch displays e.g.
-        # "Memory: 700MiB / 2048MiB" (container's real usage) instead of
-        # "Memory: 32GiB / 128GiB" (host's full RAM).
+        # ONLY for Fresh VPS Start mode. For System Default / Dedicated / Shared,
+        # neofetch's default get_memory() is used, which shows the REAL host RAM.
+        if [ "$FRESH_MODE" == true ]; then
         cat >> /tmp/_neofetch_conf << 'MEM_CONF_EOF'
 
 # Override get_memory: show container's own RAM (cgroup usage + RAM limit)
@@ -2499,6 +2501,7 @@ get_memory() {
     fi
 }
 MEM_CONF_EOF
+        fi
 
         # --- Terminal + CPU GHz override ---
         # Force Terminal to show "sshx" (or the current TERM program)
@@ -2713,60 +2716,60 @@ if [ "$1" == "-p" ] || [ "$1" == "--parse" ]; then
     exit 0
 fi
 
-# Default: pretty output (categorized like real lscpu)
-# CPU boost MHz line is ONLY shown when boost is enabled (y)
-echo "Architecture:        x86_64"
-echo "CPU op-mode(s):      32-bit, 64-bit"
-echo "Byte Order:          Little Endian"
-echo "Address sizes:       46 bits physical, 48 bits virtual"
-echo "CPU(s):              $CORES"
-echo "On-line CPU(s) list: 0-$((CORES-1))"
-echo "Vendor ID:           $VENDOR"
-echo "BIOS Model name:     $MODEL"
-echo "CPU family:          6"
-echo "Model:               158"
-echo "Thread(s) per core:  $THREADS_PER_CORE"
-echo "Core(s) per socket:  $CORES_PER_SOCKET"
-echo "Socket(s):           $SOCKETS"
-echo "Stepping:            10"
-echo "CPU(s) scaling MHz:  $MHZ"
-echo "CPU base MHz:        $BASE_MHZ"
-if [ "$BOOST_EN" == "1" ]; then
-    echo "CPU boost MHz:       $BOOST_MHZ"
-fi
-echo "CPU max MHz:         $MHZ"
-echo "CPU min MHz:         800.0000"
-echo "BogoMIPS:            $MHZ"
-echo ""
-echo "Virtualization features:"
-echo "  Virtualization:      $VIRT"
-echo "  Hypervisor vendor:   KVM"
-echo "  Virtualization type: full"
-echo ""
-echo "Caches (sum of all):"
-echo "  L1d cache:           48 KiB ($CORES instances)"
-echo "  L1i cache:           32 KiB ($CORES instances)"
-echo "  L2 cache:            2 MiB ($CORES instances)"
-echo "  L3 cache:            32 MiB (1 instance)"
-echo ""
-echo "NUMA:"
-echo "  NUMA node(s):        1"
-echo "  NUMA node0 CPU(s):   0-$((CORES-1))"
-echo ""
-echo "Vulnerabilities:"
-echo "  Gather data sampling:   Not affected"
-echo "  Itlb multihit:          Not affected"
-echo "  L1tf:                   Not affected"
-echo "  Mds:                    Not affected"
-echo "  Meltdown:               Not affected"
-echo "  Mmio stale data:        Not affected"
-echo "  Retbleed:               Not affected"
-echo "  Spec rstack overflow:   Not affected"
-echo "  Spec store bypass:      Mitigation; Speculative Store Bypass disabled via prctl"
-echo "  Spectre v1:             Mitigation; load fences"
-echo "  Spectre v2:             Mitigation; Retpolines, IBPB"
-echo "  Srbds:                  Not affected"
-echo "  Tsx async abort:        Not affected"
+# Default: pretty output (categorized like real lscpu, with indented sub-items)
+echo "Architecture:                x86_64"
+echo "  CPU op-mode(s):            32-bit, 64-bit"
+echo "  Address sizes:             48 bits physical, 48 bits virtual"
+echo "  Byte Order:                Little Endian"
+echo "CPU(s):                      $CORES"
+echo "  On-line CPU(s) list:       0-$((CORES-1))"
+echo "Vendor ID:                   $VENDOR"
+echo "  Model name:                $MODEL"
+echo "    CPU family:              23"
+echo "    Model:                   49"
+echo "    Thread(s) per core:      1"
+echo "    Core(s) per socket:      $CORES_PER_SOCKET"
+echo "    Socket(s):               $SOCKETS"
+echo "    Stepping:                0"
+echo "    BogoMIPS:                $(awk "BEGIN{printf \"%.2f\", ${MHZ}/1}" 2>/dev/null)"
+echo "    Flags:                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36"
+echo "                             clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm"
+echo "                             constant_tsc rep_good nopl nonstop_tsc cpuid extd_apicid aperfmperf"
+echo "                             tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt"
+echo "                             aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm"
+echo "                             sse4a misalignsse 3dnowprefetch topoext ssbd ibrs ibpb stibp vmmcall"
+echo "                             fsgsbase bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni"
+echo "                             xsaveopt xsavec xgetbv1 clzero xsaveerptr rdpru wbnoinvd arat npt"
+echo "                             nrip_save rdpid"
+echo "Virtualization features:     "
+echo "  Hypervisor vendor:         KVM"
+echo "  Virtualization type:       full"
+echo "Caches (sum of all):         "
+echo "  L1d:                       512 KiB ($CORES instances)"
+echo "  L1i:                       512 KiB ($CORES instances)"
+echo "  L2:                        8 MiB ($CORES instances)"
+echo "  L3:                        64 MiB (4 instances)"
+echo "NUMA:                        "
+echo "  NUMA node(s):              1"
+echo "  NUMA node0 CPU(s):         0-$((CORES-1))"
+echo "Vulnerabilities:             "
+echo "  Gather data sampling:      Not affected"
+echo "  Indirect target selection: Not affected"
+echo "  Itlb multihit:             Not affected"
+echo "  L1tf:                      Not affected"
+echo "  Mds:                       Not affected"
+echo "  Meltdown:                  Not affected"
+echo "  Mmio stale data:           Not affected"
+echo "  Reg file data sampling:    Not affected"
+echo "  Retbleed:                  Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+echo "  Spec rstack overflow:      Mitigation; safe RET"
+echo "  Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl"
+echo "  Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+echo "  Spectre v2:                Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling"
+echo "  Srbds:                     Not affected"
+echo "  Tsa:                       Not affected"
+echo "  Tsx async abort:           Not affected"
+echo "  Vmscape:                   Not affected"
 exit 0
 LSCPU_EOF
             docker cp /tmp/_fake_lscpu "$VM_NAME":/usr/local/bin/lscpu
@@ -3375,7 +3378,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.8${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.9${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
