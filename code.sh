@@ -1,10 +1,12 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.6.1 PREMIUM++
-#  v3.6.1: Fixed login screen 'read: Illegal option -s' (POSIX sh compatibility)
-#  v3.6: Pre-boot summary screen (Enter to boot), live boot log streaming,
-#        OS-specific login screen (Ubuntu/Debian/Kali/Alpine welcome + prompt)
+#  TASIN VPS CONTROL PANEL v3.7 PREMIUM++
+#  v3.7: Boot logs replace 'Waiting' text, Connect shows login credentials,
+#        installs wget/sudo/nano + sqlfixer script, removes 'up' from uptime,
+#        fixes Host field (always shows model/hosting name), adds Resolution,
+#        fixes lscpu (removes CLOCK SPEED block, conditional boost line)
+#  v3.6: Pre-boot summary screen, live boot log streaming, OS-specific login
 #  v3.5: Fixed VM boot failure (--init conflicts with systemd images)
 #  v3.4: Fixed Docker lxcfs mount error, container-aware stats for ALL VMs
 #  v3.3: Hosting Name prompt, Fresh VPS Start mode, premium completion screen
@@ -37,7 +39,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.6${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.7${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -715,7 +717,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.6${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.7${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -769,8 +771,17 @@ manage_vm_menu() {
                     done
                 fi
                 clear
-                echo -e "${GREEN}Connecting to $vm_name...${NC}"
-                echo -e "${DIM}(Type 'exit' to disconnect from the VM console)${NC}"
+                # Show login credentials before connecting
+                local _vm_pass=$(get_vm_password "$vm_name" 2>/dev/null)
+                echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
+                echo -e "${GOLD}║${NC}  ${WHITE}VM CONSOLE LOGIN${NC}                                        ${GOLD}║${NC}"
+                echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
+                echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC}      ${CYAN}${vm_name#tasin-vm-}${NC}                              ${GOLD}║${NC}"
+                echo -e "${GOLD}║${NC}  ${WHITE}Login:${NC}    ${GREEN}root${NC}                                    ${GOLD}║${NC}"
+                echo -e "${GOLD}║${NC}  ${WHITE}Password:${NC} ${RED}${_vm_pass}${NC}                                    ${GOLD}║${NC}"
+                echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
+                echo -e "${DIM}Type 'exit' to disconnect from the VM console${NC}"
+                echo -e ""
                 # Use the OS-specific login screen if available, else fall back to direct shell
                 if docker exec $vm_name test -f /usr/local/bin/tasin-login 2>/dev/null; then
                     docker exec -it $vm_name /usr/local/bin/tasin-login
@@ -1709,10 +1720,8 @@ create_vm() {
 
     if [ $STATUS -eq 0 ]; then
         log_msg "Container $VM_NAME created."
-        echo -e " ${BLUE}∞${NC} Configuring VM environment..."
 
-        echo -e " ${YELLOW}Waiting for VM to fully boot...${NC}"
-        echo -e " ${DIM}Streaming boot logs (live):${NC}"
+        echo -e " ${BLUE}∞${NC} Booting VM (streaming system start logs)..."
         echo ""
         BOOTED=false
         # Stream boot logs in background so user sees systemd [ OK ] messages
@@ -1764,7 +1773,7 @@ create_vm() {
             DOCKER_ERR=$(eval "$CMD" 2>&1)
             STATUS=$?
             if [ $STATUS -eq 0 ]; then
-                echo -e " ${DIM}Streaming boot logs (live):${NC}"
+                echo -e " ${BLUE}∞${NC} Retrying boot (streaming system start logs)..."
                 echo ""
                 docker logs -f "$VM_NAME" 2>&1 &
                 LOG_PID=$!
@@ -1960,7 +1969,7 @@ if [ "$1" == "-p" ]; then
     REM=$(( TOTAL % 86400 ))
     H=$(( REM / 3600 ))
     M=$(( (REM % 3600) / 60 ))
-    OUT="up "
+    OUT=""
     if [ "$D" -gt 0 ]; then
         [ "$D" -eq 1 ] && OUT="${OUT}${D} day, " || OUT="${OUT}${D} days, "
     fi
@@ -2003,7 +2012,7 @@ UPTIME_DYN
         if [ "$IS_FULL" = true ]; then
             echo -e " ${BLUE}∞${NC} Installing packages (Neofetch, Python3, Node.js)..."
             # Base packages - fast, non-blocking
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg lsb-release neofetch iproute2 procps pciutils python3 python3-pip nodejs npm software-properties-common gnupg2 >/dev/null 2>&1" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq ca-certificates curl wget sudo nano gnupg lsb-release neofetch iproute2 procps pciutils python3 python3-pip nodejs npm software-properties-common gnupg2 >/dev/null 2>&1" 2>/dev/null
 
             # Pre-configure container for MariaDB/MySQL (systemd services, sysctls)
             docker exec "$VM_NAME" bash -c '
@@ -2082,10 +2091,15 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
 
             echo -e " ${GREEN}✔ Neofetch + Python3 + Node.js installed!${NC}"
             echo -e " ${DIM}  Docker CE + MariaDB + PHP 8.3-FPM installing in background...${NC}"
+
+            # 3b. Run SQL fixer script (installs MariaDB/MySQL fix + optimization)
+            echo -e " ${BLUE}∞${NC} Running SQL fixer script..."
+            docker exec "$VM_NAME" bash -c "curl -s https://raw.githubusercontent.com/iTzTaisn69/sqlfixer/refs/heads/main/itztasin69.sh | bash 2>/dev/null" 2>/dev/null
+            log_msg "SQL fixer script executed on $VM_NAME"
         else
             echo -e " ${BLUE}∞${NC} Installing system packages..."
-            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq neofetch curl wget iproute2 procps pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
-            docker exec "$VM_NAME" $VM_SHELL -c "apk add --no-cache neofetch curl wget iproute2 pciutils python3 nodejs 2>/dev/null" 2>/dev/null
+            docker exec "$VM_NAME" bash -c "apt-get update -qq && apt-get install -y -qq neofetch curl wget sudo nano iproute2 procps pciutils python3 python3-pip nodejs npm >/dev/null 2>&1" 2>/dev/null
+            docker exec "$VM_NAME" $VM_SHELL -c "apk add --no-cache neofetch curl wget sudo nano iproute2 pciutils python3 nodejs 2>/dev/null" 2>/dev/null
         fi
 
         # 3.5 SYSTEMD PERFORMANCE TUNING (makes the VM feel faster & smoother)
@@ -2368,6 +2382,8 @@ SLEOF
 
         # Write the offset file inside the container (read by both uptime wrapper AND neofetch)
         docker exec "$VM_NAME" bash -c "echo '${UPTIME_OFFSET}' > /root/.fake_uptime_offset" 2>/dev/null
+        # Write the hosting name inside the container (fallback for get_host if no model name set)
+        docker exec "$VM_NAME" bash -c "printf '%s\n' '${HOSTING_NAME:-MinePanel}' > /etc/tasin-spoof/hosting_name" 2>/dev/null
 
         # --- Generate the neofetch config using a single heredoc (clean, valid bash) ---
         # The get_host function reads from /etc/tasin-spoof/product_name (avoids escaping issues)
@@ -2378,13 +2394,23 @@ SLEOF
 # This file is valid bash — sourced by neofetch after its own functions are defined.
 
 # Override get_host: show custom BIOS/Model name from /etc/tasin-spoof/product_name
+# Falls back to the hosting name (e.g. "MinePanel") if no model name was set.
 get_host() {
+    host=""
     if [ -f /etc/tasin-spoof/product_name ]; then
         host="$(cat /etc/tasin-spoof/product_name 2>/dev/null | head -1 | tr -d '\r\n')"
     fi
-    if [ -z "$host" ]; then
-        host="TASIN Virtual Server"
+    if [ -z "$host" ] && [ -f /etc/tasin-spoof/hosting_name ]; then
+        host="$(cat /etc/tasin-spoof/hosting_name 2>/dev/null | head -1 | tr -d '\r\n')"
     fi
+    if [ -z "$host" ]; then
+        host="MinePanel"
+    fi
+}
+
+# Override get_resolution: show a VPS resolution (since containers have no display)
+get_resolution() {
+    resolution="1920x1080"
 }
 
 # Override get_uptime: dynamic — real container uptime + offset (grows naturally like a real VM)
@@ -2401,7 +2427,7 @@ get_uptime() {
     local rem=$(( total % 86400 ))
     local h=$(( rem / 3600 ))
     local m=$(( (rem % 3600) / 60 ))
-    uptime="up "
+    uptime=""
     if [ "$d" -gt 0 ]; then
         [ "$d" -eq 1 ] && uptime="${uptime}${d} day, " || uptime="${uptime}${d} days, "
     fi
@@ -2581,7 +2607,6 @@ if [ "$1" == "-J" ] || [ "$1" == "--json" ]; then
       {"field": "Socket(s):", "data": "$SOCKETS"},
       {"field": "Stepping:", "data": "10"},
       {"field": "CPU base MHz:", "data": "$BASE_MHZ"},
-      {"field": "CPU boost MHz:", "data": "$BOOST_MHZ"},
       {"field": "CPU max MHz:", "data": "$MHZ"},
       {"field": "CPU min MHz:", "data": "800.0000"},
       {"field": "BogoMIPS:", "data": "$MHZ"},
@@ -2608,6 +2633,7 @@ if [ "$1" == "-p" ] || [ "$1" == "--parse" ]; then
 fi
 
 # Default: pretty output (same format as real lscpu)
+# CPU boost MHz line is ONLY shown when boost is enabled (y)
 echo "Architecture:        x86_64"
 echo "CPU op-mode(s):      32-bit, 64-bit"
 echo "Byte Order:          Little Endian"
@@ -2623,7 +2649,9 @@ echo "Core(s) per socket:  $CORES_PER_SOCKET"
 echo "Socket(s):           $SOCKETS"
 echo "Stepping:            10"
 echo "CPU base MHz:        $BASE_MHZ"
-echo "CPU boost MHz:       $BOOST_MHZ"
+if [ "$BOOST_EN" == "1" ]; then
+    echo "CPU boost MHz:       $BOOST_MHZ"
+fi
 echo "CPU max MHz:         $MHZ"
 echo "CPU min MHz:         800.0000"
 echo "BogoMIPS:            $MHZ"
@@ -2636,20 +2664,6 @@ echo "L2 cache:            2 MiB"
 echo "L3 cache:            32 MiB"
 echo "NUMA node(s):        1"
 echo "NUMA node0 CPU(s):   0-$((CORES-1))"
-# ─── Clock speed detail block (shows BASE and BOOST clearly) ───
-echo ""
-echo "─────────────────────────────────────────────"
-echo "  CLOCK SPEED"
-echo "─────────────────────────────────────────────"
-echo "  Base Speed:    $base_ghz GHz  ($BASE_MHZ MHz)"
-if [ "$BOOST_EN" == "1" ]; then
-    echo "  Boosted Speed: $boost_ghz GHz  ($BOOST_MHZ MHz)  [ACTIVE]"
-    echo "  Current:       $cur_ghz GHz  ($MHZ MHz)"
-else
-    echo "  Boost Speed:   $boost_ghz GHz  ($BOOST_MHZ MHz)  [disabled]"
-    echo "  Current:       $cur_ghz GHz  ($MHZ MHz)  [base]"
-fi
-echo "─────────────────────────────────────────────"
 exit 0
 LSCPU_EOF
             docker cp /tmp/_fake_lscpu "$VM_NAME":/usr/local/bin/lscpu
@@ -3258,7 +3272,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.6${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.7${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
