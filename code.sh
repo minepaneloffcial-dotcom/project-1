@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.7 PREMIUM++
+#  TASIN VPS CONTROL PANEL v3.8 PREMIUM++
+#  v3.8: lscpu now categorized (Virtualization/Caches/NUMA/Vulnerabilities),
+#        neofetch shows Host + Terminal + CPU @ X.XXXGHz via print_info override
 #  v3.7: Boot logs replace 'Waiting' text, Connect shows login credentials,
-#        installs wget/sudo/nano + sqlfixer script, removes 'up' from uptime,
-#        fixes Host field (always shows model/hosting name), adds Resolution,
-#        fixes lscpu (removes CLOCK SPEED block, conditional boost line)
+#        installs wget/sudo/nano + sqlfixer script, removes 'up' from uptime
 #  v3.6: Pre-boot summary screen, live boot log streaming, OS-specific login
 #  v3.5: Fixed VM boot failure (--init conflicts with systemd images)
 #  v3.4: Fixed Docker lxcfs mount error, container-aware stats for ALL VMs
@@ -39,7 +39,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.7${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.8${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -717,7 +717,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.7${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.8${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -2500,6 +2500,87 @@ get_memory() {
 }
 MEM_CONF_EOF
 
+        # --- Terminal + CPU GHz override ---
+        # Force Terminal to show "sshx" (or the current TERM program)
+        # Force CPU to display "@ X.XXXGHz" format (neofetch default uses MHz sometimes)
+        cat >> /tmp/_neofetch_conf << 'TERM_CPU_EOF'
+
+# Override get_term: show the terminal program (sshx / bash / etc.)
+get_term() {
+    term="sshx"
+    # If sshx isn't the parent, fall back to the parent process name
+    if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_TTY" ]; then
+        term="ssh"
+    fi
+}
+
+# Override get_cpu: format CPU speed as GHz (e.g. "@ 5.050GHz")
+get_cpu() {
+    local cpu_vendor=""
+    local cpu_model=""
+    local cpu_mhz=""
+    [ -f /etc/tasin-spoof/cpu_name ] && cpu_model=$(cat /etc/tasin-spoof/cpu_name 2>/dev/null | head -1 | tr -d '\r\n')
+    [ -f /etc/tasin-spoof/cpu_mhz ]  && cpu_mhz=$(cat /etc/tasin-spoof/cpu_mhz 2>/dev/null | head -1 | tr -dc '0-9.')
+    [ -z "$cpu_model" ] && cpu_model=$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+    [ -z "$cpu_mhz" ]   && cpu_mhz=$(grep -m1 '^cpu MHz' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+
+    # Strip the "(R)" / "(TM)" artifacts for cleaner display
+    cpu_model="${cpu_model//(R)/}"
+    cpu_model="${cpu_model//(TM)/}"
+    cpu_model="${cpu_model//  / }"
+
+    # Count cores
+    local cores=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+    [ -z "$cores" ] && cores=1
+
+    # Convert MHz → GHz (3 decimal places)
+    local ghz=""
+    if [ -n "$cpu_mhz" ]; then
+        ghz=$(awk "BEGIN{printf \"%.3f\", ${cpu_mhz}/1000}")
+    fi
+
+    if [ -n "$ghz" ]; then
+        cpu="${cpu_model} (${cores}) @ ${ghz}GHz"
+    else
+        cpu="${cpu_model} (${cores})"
+    fi
+
+    # Set brand for logo
+    if grep -qi 'AuthenticAMD' /proc/cpuinfo 2>/dev/null; then
+        cpu_brand="AMD"
+    else
+        cpu_brand="Intel"
+    fi
+}
+get_cpu_legacy() { :; }
+TERM_CPU_EOF
+
+        # --- Override print_info to include Host, Terminal, Resolution, etc. ---
+        # neofetch's default print_info doesn't always show Host. This override
+        # explicitly lists every info line in the order the user wants.
+        cat >> /tmp/_neofetch_conf << 'PRINT_INFO_EOF'
+
+# Override print_info: control exactly which lines appear and in what order
+print_info() {
+    info title
+    info underline
+    info "OS" distro
+    info "Host" host
+    info "Kernel" kernel
+    info "Uptime" uptime
+    info "Packages" packages
+    info "Shell" shell
+    info "Resolution" resolution
+    info "Terminal" term
+    info "CPU" cpu
+    info "GPU" gpu
+    info "Memory" memory
+    info "IP" local_ip
+    info "Locale" locale
+    info cols
+}
+PRINT_INFO_EOF
+
         # Deploy config file into container at ~/.config/neofetch/config.conf
         docker exec "$VM_NAME" mkdir -p /root/.config/neofetch 2>/dev/null
         docker cp /tmp/_neofetch_conf "$VM_NAME":/root/.config/neofetch/config.conf
@@ -2632,7 +2713,7 @@ if [ "$1" == "-p" ] || [ "$1" == "--parse" ]; then
     exit 0
 fi
 
-# Default: pretty output (same format as real lscpu)
+# Default: pretty output (categorized like real lscpu)
 # CPU boost MHz line is ONLY shown when boost is enabled (y)
 echo "Architecture:        x86_64"
 echo "CPU op-mode(s):      32-bit, 64-bit"
@@ -2641,13 +2722,14 @@ echo "Address sizes:       46 bits physical, 48 bits virtual"
 echo "CPU(s):              $CORES"
 echo "On-line CPU(s) list: 0-$((CORES-1))"
 echo "Vendor ID:           $VENDOR"
-echo "Model name:          $MODEL"
+echo "BIOS Model name:     $MODEL"
 echo "CPU family:          6"
 echo "Model:               158"
 echo "Thread(s) per core:  $THREADS_PER_CORE"
 echo "Core(s) per socket:  $CORES_PER_SOCKET"
 echo "Socket(s):           $SOCKETS"
 echo "Stepping:            10"
+echo "CPU(s) scaling MHz:  $MHZ"
 echo "CPU base MHz:        $BASE_MHZ"
 if [ "$BOOST_EN" == "1" ]; then
     echo "CPU boost MHz:       $BOOST_MHZ"
@@ -2655,15 +2737,36 @@ fi
 echo "CPU max MHz:         $MHZ"
 echo "CPU min MHz:         800.0000"
 echo "BogoMIPS:            $MHZ"
-echo "Virtualization:      $VIRT"
-echo "Hypervisor vendor:   KVM"
-echo "Virtualization type: full"
-echo "L1d cache:           48 KiB"
-echo "L1i cache:           32 KiB"
-echo "L2 cache:            2 MiB"
-echo "L3 cache:            32 MiB"
-echo "NUMA node(s):        1"
-echo "NUMA node0 CPU(s):   0-$((CORES-1))"
+echo ""
+echo "Virtualization features:"
+echo "  Virtualization:      $VIRT"
+echo "  Hypervisor vendor:   KVM"
+echo "  Virtualization type: full"
+echo ""
+echo "Caches (sum of all):"
+echo "  L1d cache:           48 KiB ($CORES instances)"
+echo "  L1i cache:           32 KiB ($CORES instances)"
+echo "  L2 cache:            2 MiB ($CORES instances)"
+echo "  L3 cache:            32 MiB (1 instance)"
+echo ""
+echo "NUMA:"
+echo "  NUMA node(s):        1"
+echo "  NUMA node0 CPU(s):   0-$((CORES-1))"
+echo ""
+echo "Vulnerabilities:"
+echo "  Gather data sampling:   Not affected"
+echo "  Itlb multihit:          Not affected"
+echo "  L1tf:                   Not affected"
+echo "  Mds:                    Not affected"
+echo "  Meltdown:               Not affected"
+echo "  Mmio stale data:        Not affected"
+echo "  Retbleed:               Not affected"
+echo "  Spec rstack overflow:   Not affected"
+echo "  Spec store bypass:      Mitigation; Speculative Store Bypass disabled via prctl"
+echo "  Spectre v1:             Mitigation; load fences"
+echo "  Spectre v2:             Mitigation; Retpolines, IBPB"
+echo "  Srbds:                  Not affected"
+echo "  Tsx async abort:        Not affected"
 exit 0
 LSCPU_EOF
             docker cp /tmp/_fake_lscpu "$VM_NAME":/usr/local/bin/lscpu
@@ -3272,7 +3375,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.7${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.8${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
