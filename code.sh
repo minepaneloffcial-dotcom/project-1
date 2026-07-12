@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v4.0 PREMIUM++
-#  v4.0: Removed fake lscpu (use default Ubuntu lscpu), fixed dpkg error
-#        (removed Dpkg::Options), removed IP/Locale from neofetch
+#  TASIN VPS CONTROL PANEL v4.1 PREMIUM++
+#  v4.1: DNS protection (fixes sshx going offline when installing Pterodactyl) —
+#        masks systemd-resolved, locks resolv.conf with chattr, auto-recovers DNS
+#  v4.0: Removed fake lscpu, fixed dpkg error, removed IP/Locale from neofetch
 #  v3.9: lscpu matches real format, fake free/df only for Fresh mode
 #  v3.8: lscpu categorized, neofetch shows Host + Terminal + CPU @ X.XXXGHz
 #  v3.7: Boot logs replace 'Waiting' text, Connect shows login credentials,
@@ -41,7 +42,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.0${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.1${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -719,7 +720,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.0${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.1${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -2135,8 +2136,38 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
                 # Faster apt: parallel downloads, no install-recommends bloat
                 mkdir -p /etc/apt/apt.conf.d
                 printf "Acquire::Queue-Mode \\"host\\";\nAcquire::Languages \\"none\\";\nAPT::Install-Recommends \\"false\\";\nAPT::Install-Suggests \\"false\\";\n" > /etc/apt/apt.conf.d/99-tasin-fast
+
+                # ─── DNS PROTECTION (fixes sshx going offline when installing Pterodactyl) ───
+                # Pterodactyl installs systemd-resolved which overwrites /etc/resolv.conf
+                # and breaks DNS inside the container. This causes sshx to lose connection
+                # ("failed to lookup address information: Try again") and all services go down.
+                # Fix: mask systemd-resolved, write a static resolv.conf, make it immutable.
+
+                # 1. Mask systemd-resolved so it can NEVER start and overwrite resolv.conf
+                systemctl mask systemd-resolved.service 2>/dev/null
+                systemctl stop systemd-resolved.service 2>/dev/null
+
+                # 2. Write a static /etc/resolv.conf with fast public DNS
+                rm -f /etc/resolv.conf 2>/dev/null
+                printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1\noptions timeout:2 attempts:3 rotate\n" > /etc/resolv.conf
+
+                # 3. Make resolv.conf immutable so packages cannot overwrite it
+                chattr +i /etc/resolv.conf 2>/dev/null
+
+                # 4. Create a DNS recovery script (runs on every login / boot)
+                printf "#!/bin/bash\nchattr -i /etc/resolv.conf 2>/dev/null\nrm -f /etc/resolv.conf\nprintf \"nameserver 1.1.1.1\\\\nnameserver 8.8.8.8\\\\nnameserver 1.0.0.1\\\\noptions timeout:2 attempts:3 rotate\\\\n\" > /etc/resolv.conf\nchattr +i /etc/resolv.conf 2>/dev/null\n" > /usr/local/bin/fix-dns.sh
+                chmod +x /usr/local/bin/fix-dns.sh
+
+                # 5. Add DNS fix to profile.d (runs on every login)
+                echo "/usr/local/bin/fix-dns.sh >/dev/null 2>&1" > /etc/profile.d/dns-fix.sh
+                chmod +x /etc/profile.d/dns-fix.sh
+
+                # 6. Create a systemd service to restore DNS on boot
+                printf "[Unit]\nDescription=TASIN DNS Recovery\nAfter=network.target\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/fix-dns.sh\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n" > /etc/systemd/system/dns-fix.service
+                systemctl enable dns-fix.service 2>/dev/null
+                systemctl daemon-reload 2>/dev/null
             ' 2>/dev/null
-            log_msg "Performance tuning applied to $VM_NAME"
+            log_msg "Performance tuning + DNS protection applied to $VM_NAME"
         fi
 
         # 3.6 CONTAINER-AWARE STATS (ONLY for Fresh VPS Start mode — option 4)
@@ -3197,7 +3228,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.0${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.1${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
