@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v3.9 PREMIUM++
-#  v3.9: lscpu matches real format (indented sub-items, Flags, full Vulnerabilities),
-#        fake free/df/neofetch memory ONLY for Fresh mode (System Default shows real RAM)
+#  TASIN VPS CONTROL PANEL v4.0 PREMIUM++
+#  v4.0: Removed fake lscpu (use default Ubuntu lscpu), fixed dpkg error
+#        (removed Dpkg::Options), removed IP/Locale from neofetch
+#  v3.9: lscpu matches real format, fake free/df only for Fresh mode
 #  v3.8: lscpu categorized, neofetch shows Host + Terminal + CPU @ X.XXXGHz
 #  v3.7: Boot logs replace 'Waiting' text, Connect shows login credentials,
 #        installs wget/sudo/nano + sqlfixer script, removes 'up' from uptime
@@ -40,7 +41,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.9${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.0${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -718,7 +719,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v3.9${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.0${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -2133,7 +2134,7 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
 
                 # Faster apt: parallel downloads, no install-recommends bloat
                 mkdir -p /etc/apt/apt.conf.d
-                printf "Acquire::Queue-Mode \\"host\\";\nAcquire::Languages \\"none\\";\nAPT::Install-Recommends \\"false\\";\nAPT::Install-Suggests \\"false\\";\nDpkg::Options {\\"--force-confdef\\";\\"--force-confold\\";};\n" > /etc/apt/apt.conf.d/99-tasin-fast
+                printf "Acquire::Queue-Mode \\"host\\";\nAcquire::Languages \\"none\\";\nAPT::Install-Recommends \\"false\\";\nAPT::Install-Suggests \\"false\\";\n" > /etc/apt/apt.conf.d/99-tasin-fast
             ' 2>/dev/null
             log_msg "Performance tuning applied to $VM_NAME"
         fi
@@ -2578,8 +2579,6 @@ print_info() {
     info "CPU" cpu
     info "GPU" gpu
     info "Memory" memory
-    info "IP" local_ip
-    info "Locale" locale
     info cols
 }
 PRINT_INFO_EOF
@@ -2599,186 +2598,6 @@ PRINT_INFO_EOF
             sed -i "/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d" "$NEO" 2>/dev/null
         ' 2>/dev/null
 
-        # ========================================
-        # FAKE lscpu WRAPPER (fixes "lscpu is glitched")
-        # The real lscpu reads from sysfs (/sys/devices/system/cpu/) which shows
-        # the HOST CPU, not the spoofed one. This wrapper parses /proc/cpuinfo
-        # (which IS spoofed via the bind mount) and outputs in lscpu format.
-        # Also saves CPU info to /etc/tasin-spoof/ for tools that check DMI.
-        # ========================================
-        if [ "$USE_SPOOF" = true ]; then
-            # Save CPU spoof values inside the container for the fake lscpu to read
-            docker exec "$VM_NAME" mkdir -p /etc/tasin-spoof 2>/dev/null
-            docker exec "$VM_NAME" bash -c "printf '%s\n' '$V_ID' > /etc/tasin-spoof/cpu_vendor" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_NAME' > /etc/tasin-spoof/cpu_name" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_MHZ' > /etc/tasin-spoof/cpu_mhz" 2>/dev/null
-            # Save base + boost speeds so the fake lscpu can show BOTH
-            docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_BASE_MHZ' > /etc/tasin-spoof/cpu_base_mhz" 2>/dev/null
-            docker exec "$VM_NAME" bash -c "printf '%s\n' '$C_BOOST_MHZ' > /etc/tasin-spoof/cpu_boost_mhz" 2>/dev/null
-            # Save whether boost is enabled (1=yes, 0=no)
-            local _boost_flag=0
-            if [[ "$boost_yes" == "y" ]]; then _boost_flag=1; fi
-            docker exec "$VM_NAME" bash -c "printf '%s\n' '$_boost_flag' > /etc/tasin-spoof/cpu_boost_enabled" 2>/dev/null
-
-            # Build the fake lscpu wrapper on the host, then copy into container
-            cat << 'LSCPU_EOF' > /tmp/_fake_lscpu
-#!/bin/bash
-# TASIN fake lscpu v3.3 — reads spoofed /proc/cpuinfo + /etc/tasin-spoof/
-# Shows BASE SPEED and BOOST SPEED (when boost is enabled) so the user
-# can verify their clock speed boost choice is active.
-
-# Read from spoof files (written by TASIN panel)
-VENDOR=""
-MODEL=""
-MHZ=""
-BASE_MHZ=""
-BOOST_MHZ=""
-BOOST_EN=0
-[ -f /etc/tasin-spoof/cpu_vendor ] && VENDOR=$(cat /etc/tasin-spoof/cpu_vendor 2>/dev/null | head -1 | tr -d '\r\n')
-[ -f /etc/tasin-spoof/cpu_name ]   && MODEL=$(cat /etc/tasin-spoof/cpu_name 2>/dev/null | head -1 | tr -d '\r\n')
-[ -f /etc/tasin-spoof/cpu_mhz ]    && MHZ=$(cat /etc/tasin-spoof/cpu_mhz 2>/dev/null | head -1 | tr -d '\r\n')
-[ -f /etc/tasin-spoof/cpu_base_mhz ]  && BASE_MHZ=$(cat /etc/tasin-spoof/cpu_base_mhz 2>/dev/null | head -1 | tr -d '\r\n')
-[ -f /etc/tasin-spoof/cpu_boost_mhz ] && BOOST_MHZ=$(cat /etc/tasin-spoof/cpu_boost_mhz 2>/dev/null | head -1 | tr -d '\r\n')
-[ -f /etc/tasin-spoof/cpu_boost_enabled ] && BOOST_EN=$(cat /etc/tasin-spoof/cpu_boost_enabled 2>/dev/null | head -1 | tr -d '\r\n')
-
-# Fallback: parse /proc/cpuinfo (spoofed via bind mount)
-[ -z "$VENDOR" ] && VENDOR=$(grep -m1 '^vendor_id' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
-[ -z "$MODEL" ]  && MODEL=$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
-[ -z "$MHZ" ]    && MHZ=$(grep -m1 '^cpu MHz' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
-[ -z "$BASE_MHZ" ]  && BASE_MHZ="$MHZ"
-[ -z "$BOOST_MHZ" ] && BOOST_MHZ="$MHZ"
-
-# Convert MHz → GHz for nicer display
-base_ghz=$(awk "BEGIN{printf \"%.2f\", ${BASE_MHZ}/1000}" 2>/dev/null)
-boost_ghz=$(awk "BEGIN{printf \"%.2f\", ${BOOST_MHZ}/1000}" 2>/dev/null)
-cur_ghz=$(awk "BEGIN{printf \"%.2f\", ${MHZ}/1000}" 2>/dev/null)
-
-# Count cores from /proc/cpuinfo
-CORES=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
-[ -z "$CORES" ] && CORES=1
-SOCKETS=1
-CORES_PER_SOCKET=$CORES
-THREADS_PER_CORE=1
-
-# Virtualization type
-VIRT="VT-x"
-[ "$VENDOR" == "AuthenticAMD" ] && VIRT="AMD-V"
-
-# Handle --help
-if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
-    echo "Usage: lscpu [options]"
-    echo "Display information about the CPU architecture."
-    exit 0
-fi
-
-# Handle JSON output (-J)
-if [ "$1" == "-J" ] || [ "$1" == "--json" ]; then
-    cat << JSONEOF
-{
-   "lscpu": [
-      {"field": "Architecture:", "data": "x86_64"},
-      {"field": "CPU op-mode(s):", "data": "32-bit, 64-bit"},
-      {"field": "Byte Order:", "data": "Little Endian"},
-      {"field": "Address sizes:", "data": "46 bits physical, 48 bits virtual"},
-      {"field": "CPU(s):", "data": "$CORES"},
-      {"field": "On-line CPU(s) list:", "data": "0-$((CORES-1))"},
-      {"field": "Vendor ID:", "data": "$VENDOR"},
-      {"field": "Model name:", "data": "$MODEL"},
-      {"field": "CPU family:", "data": "6"},
-      {"field": "Model:", "data": "158"},
-      {"field": "Thread(s) per core:", "data": "$THREADS_PER_CORE"},
-      {"field": "Core(s) per socket:", "data": "$CORES_PER_SOCKET"},
-      {"field": "Socket(s):", "data": "$SOCKETS"},
-      {"field": "Stepping:", "data": "10"},
-      {"field": "CPU base MHz:", "data": "$BASE_MHZ"},
-      {"field": "CPU max MHz:", "data": "$MHZ"},
-      {"field": "CPU min MHz:", "data": "800.0000"},
-      {"field": "BogoMIPS:", "data": "$MHZ"},
-      {"field": "Virtualization:", "data": "$VIRT"},
-      {"field": "Hypervisor vendor:", "data": "KVM"},
-      {"field": "Virtualization type:", "data": "full"},
-      {"field": "L1d cache:", "data": "48 KiB"},
-      {"field": "L1i cache:", "data": "32 KiB"},
-      {"field": "L2 cache:", "data": "2 MiB"},
-      {"field": "L3 cache:", "data": "32 MiB"}
-   ]
-}
-JSONEOF
-    exit 0
-fi
-
-# Handle --parse / -p (extract specific fields)
-if [ "$1" == "-p" ] || [ "$1" == "--parse" ]; then
-    # Default parseable output: CPU,Core,Socket,Node
-    for ((i=0; i<CORES; i++)); do
-        echo "$i,$i,0,0"
-    done
-    exit 0
-fi
-
-# Default: pretty output (categorized like real lscpu, with indented sub-items)
-echo "Architecture:                x86_64"
-echo "  CPU op-mode(s):            32-bit, 64-bit"
-echo "  Address sizes:             48 bits physical, 48 bits virtual"
-echo "  Byte Order:                Little Endian"
-echo "CPU(s):                      $CORES"
-echo "  On-line CPU(s) list:       0-$((CORES-1))"
-echo "Vendor ID:                   $VENDOR"
-echo "  Model name:                $MODEL"
-echo "    CPU family:              23"
-echo "    Model:                   49"
-echo "    Thread(s) per core:      1"
-echo "    Core(s) per socket:      $CORES_PER_SOCKET"
-echo "    Socket(s):               $SOCKETS"
-echo "    Stepping:                0"
-echo "    BogoMIPS:                $(awk "BEGIN{printf \"%.2f\", ${MHZ}/1}" 2>/dev/null)"
-echo "    Flags:                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36"
-echo "                             clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm"
-echo "                             constant_tsc rep_good nopl nonstop_tsc cpuid extd_apicid aperfmperf"
-echo "                             tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt"
-echo "                             aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm"
-echo "                             sse4a misalignsse 3dnowprefetch topoext ssbd ibrs ibpb stibp vmmcall"
-echo "                             fsgsbase bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni"
-echo "                             xsaveopt xsavec xgetbv1 clzero xsaveerptr rdpru wbnoinvd arat npt"
-echo "                             nrip_save rdpid"
-echo "Virtualization features:     "
-echo "  Hypervisor vendor:         KVM"
-echo "  Virtualization type:       full"
-echo "Caches (sum of all):         "
-echo "  L1d:                       512 KiB ($CORES instances)"
-echo "  L1i:                       512 KiB ($CORES instances)"
-echo "  L2:                        8 MiB ($CORES instances)"
-echo "  L3:                        64 MiB (4 instances)"
-echo "NUMA:                        "
-echo "  NUMA node(s):              1"
-echo "  NUMA node0 CPU(s):         0-$((CORES-1))"
-echo "Vulnerabilities:             "
-echo "  Gather data sampling:      Not affected"
-echo "  Indirect target selection: Not affected"
-echo "  Itlb multihit:             Not affected"
-echo "  L1tf:                      Not affected"
-echo "  Mds:                       Not affected"
-echo "  Meltdown:                  Not affected"
-echo "  Mmio stale data:           Not affected"
-echo "  Reg file data sampling:    Not affected"
-echo "  Retbleed:                  Mitigation; untrained return thunk; SMT enabled with STIBP protection"
-echo "  Spec rstack overflow:      Mitigation; safe RET"
-echo "  Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl"
-echo "  Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
-echo "  Spectre v2:                Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling"
-echo "  Srbds:                     Not affected"
-echo "  Tsa:                       Not affected"
-echo "  Tsx async abort:           Not affected"
-echo "  Vmscape:                   Not affected"
-exit 0
-LSCPU_EOF
-            docker cp /tmp/_fake_lscpu "$VM_NAME":/usr/local/bin/lscpu
-            docker exec "$VM_NAME" chmod +x /usr/local/bin/lscpu 2>/dev/null
-            # Ensure /usr/local/bin is first in PATH (so our wrapper takes priority)
-            docker exec "$VM_NAME" bash -c "grep -q 'usr/local/bin' /etc/profile 2>/dev/null || echo 'export PATH=/usr/local/bin:\$PATH' >> /etc/profile" 2>/dev/null
-            rm -f /tmp/_fake_lscpu
-            echo -e " ${GREEN}✔ CPU spoof deployed (lscpu + /proc/cpuinfo)${NC}"
-        fi
 
         # 6. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
         if [ -n "$GPU_SPOOF_NAME" ]; then
@@ -3378,7 +3197,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v3.9${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.0${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
