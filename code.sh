@@ -1,9 +1,11 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v4.1 PREMIUM++
-#  v4.1: DNS protection (fixes sshx going offline when installing Pterodactyl) —
-#        masks systemd-resolved, locks resolv.conf with chattr, auto-recovers DNS
+#  TASIN VPS CONTROL PANEL v4.2 PREMIUM++
+#  v4.2: Neofetch config rewritten as single heredoc (fixes Host/Resolution/Terminal),
+#        screenfetch wrapper added, VPS performance boosted (cpu-shares=4096, shm=512m,
+#        oom-kill-disable, more sysctl tuning, disable snapd/unattended-upgrades)
+#  v4.1: DNS protection (fixes sshx going offline when installing Pterodactyl)
 #  v4.0: Removed fake lscpu, fixed dpkg error, removed IP/Locale from neofetch
 #  v3.9: lscpu matches real format, fake free/df only for Fresh mode
 #  v3.8: lscpu categorized, neofetch shows Host + Terminal + CPU @ X.XXXGHz
@@ -42,7 +44,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.1${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.2${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -720,7 +722,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.1${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.2${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -1555,7 +1557,10 @@ create_vm() {
     if [ "$IS_FULL" != true ]; then
         _init_flag="--init"
     fi
-    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped $_init_flag --cpu-shares=2048 --blkio-weight=1000 --shm-size=256m --pids-limit=-1 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
+    # v4.2: Added --oom-kill-disable (prevents OOM killer from killing VPS processes),
+    # --cpu-rt-runtime=950000 (95% realtime CPU runtime — faster response),
+    # --memory-swappiness=10 (prefer RAM over swap — faster)
+    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped $_init_flag --cpu-shares=4096 --blkio-weight=1000 --shm-size=512m --pids-limit=-1 --oom-kill-disable --cpu-rt-runtime=950000 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
 
     # GPU PASSTHROUGH (real device, only if user chose one)
     if [ -n "$GPU_DEVICE" ]; then
@@ -1749,7 +1754,7 @@ create_vm() {
             docker rm -f "$VM_NAME" >/dev/null 2>&1
             # Rebuild CMD without --init (in case it was set) and without --privileged's
             # cgroup conflicts — use a simpler launch
-            CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cpu-shares=2048 --blkio-weight=1000 --shm-size=256m --pids-limit=-1 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
+            CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cpu-shares=4096 --blkio-weight=1000 --shm-size=512m --pids-limit=-1 --oom-kill-disable --cpu-rt-runtime=950000 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
             if [ -n "$GPU_DEVICE" ]; then
                 if [ "$GPU_DEVICE" == "all" ]; then CMD="$CMD --gpus all"; else CMD="$CMD --gpus device=$GPU_DEVICE"; fi
                 CMD="$CMD --runtime=nvidia"
@@ -2126,8 +2131,28 @@ chmod +x /tmp/install_docker_bg.sh" 2>/dev/null
                 # Lower swappiness — prefer RAM over swap (faster)
                 echo "vm.swappiness=10" > /etc/sysctl.d/99-tasin-performance.conf
                 echo "vm.vfs_cache_pressure=50" >> /etc/sysctl.d/99-tasin-performance.conf
+                echo "vm.dirty_ratio=10" >> /etc/sysctl.d/99-tasin-performance.conf
+                echo "vm.dirty_background_ratio=5" >> /etc/sysctl.d/99-tasin-performance.conf
                 echo "net.core.default_qdisc=fq" >> /etc/sysctl.d/99-tasin-performance.conf 2>/dev/null
+                echo "net.core.somaxconn=65535" >> /etc/sysctl.d/99-tasin-performance.conf 2>/dev/null
+                echo "net.ipv4.tcp_fastopen=3" >> /etc/sysctl.d/99-tasin-performance.conf 2>/dev/null
+                echo "fs.file-max=2097152" >> /etc/sysctl.d/99-tasin-performance.conf 2>/dev/null
                 sysctl -p /etc/sysctl.d/99-tasin-performance.conf >/dev/null 2>&1
+
+                # Disable more unnecessary services that slow down the VM
+                systemctl mask systemd-resolved.service 2>/dev/null
+                systemctl mask snapd.service 2>/dev/null
+                systemctl mask snapd.socket 2>/dev/null
+                systemctl mask snapd.seeded.service 2>/dev/null
+                systemctl mask unattended-upgrades.service 2>/dev/null
+                systemctl mask pollinate.service 2>/dev/null
+                systemctl mask apt-news.service 2>/dev/null
+
+                # Raise file descriptor limits (faster for web servers, databases)
+                printf "* soft nofile 1048576\n* hard nofile 1048576\nroot soft nofile 1048576\nroot hard nofile 1048576\n" > /etc/security/limits.d/99-tasin.conf
+                printf "DefaultLimitNOFILE=1048576\n" > /etc/systemd/system.conf.d/limits.conf 2>/dev/null
+                mkdir -p /etc/systemd/system.conf.d 2>/dev/null
+                printf "DefaultLimitNOFILE=1048576\n" > /etc/systemd/system.conf.d/limits.conf
 
                 # Unlimited journal rate (prevents log throttling delays)
                 mkdir -p /etc/systemd/journald.conf.d
@@ -2420,110 +2445,38 @@ SLEOF
         # Write the hosting name inside the container (fallback for get_host if no model name set)
         docker exec "$VM_NAME" bash -c "printf '%s\n' '${HOSTING_NAME:-MinePanel}' > /etc/tasin-spoof/hosting_name" 2>/dev/null
 
-        # --- Generate the neofetch config using a single heredoc (clean, valid bash) ---
-        # The get_host function reads from /etc/tasin-spoof/product_name (avoids escaping issues)
-        # The get_uptime function is DYNAMIC (computes real container uptime + offset on each run)
-        cat > /tmp/_neofetch_conf << 'NEOFETCH_CONF_EOF'
-# TASIN Neofetch Config v3.1 - Dynamic overrides
-# Auto-generated by TASIN VPS Control Panel
-# This file is valid bash — sourced by neofetch after its own functions are defined.
-
-# Override get_host: show custom BIOS/Model name from /etc/tasin-spoof/product_name
-# Falls back to the hosting name (e.g. "MinePanel") if no model name was set.
-get_host() {
-    host=""
-    if [ -f /etc/tasin-spoof/product_name ]; then
-        host="$(cat /etc/tasin-spoof/product_name 2>/dev/null | head -1 | tr -d '\r\n')"
-    fi
-    if [ -z "$host" ] && [ -f /etc/tasin-spoof/hosting_name ]; then
-        host="$(cat /etc/tasin-spoof/hosting_name 2>/dev/null | head -1 | tr -d '\r\n')"
-    fi
-    if [ -z "$host" ]; then
-        host="MinePanel"
-    fi
-}
-
-# Override get_resolution: show a VPS resolution (since containers have no display)
-get_resolution() {
-    resolution="1920x1080"
-}
-
-# Override get_uptime: dynamic — real container uptime + offset (grows naturally like a real VM)
-get_uptime() {
-    local offset=60
-    if [ -f /root/.fake_uptime_offset ]; then
-        offset=$(cat /root/.fake_uptime_offset 2>/dev/null | head -1 | tr -dc '0-9')
-    fi
-    [ -z "$offset" ] && offset=60
-    local real_sec=$(ps -p 1 -o etimes= 2>/dev/null | awk '{print $1}' | tr -dc '0-9')
-    [ -z "$real_sec" ] && real_sec=0
-    local total=$(( real_sec + offset ))
-    local d=$(( total / 86400 ))
-    local rem=$(( total % 86400 ))
-    local h=$(( rem / 3600 ))
-    local m=$(( (rem % 3600) / 60 ))
-    uptime=""
-    if [ "$d" -gt 0 ]; then
-        [ "$d" -eq 1 ] && uptime="${uptime}${d} day, " || uptime="${uptime}${d} days, "
-    fi
-    if [ "$h" -gt 0 ] || [ "$d" -gt 0 ]; then
-        if [ "$h" -eq 1 ]; then
-            uptime="${uptime}1 hour, "
-        else
-            uptime="${uptime}${h} hours, "
-        fi
-    fi
-    if [ "$m" -eq 1 ]; then
-        uptime="${uptime}1 minute"
-    else
-        uptime="${uptime}${m} minutes"
-    fi
-}
-NEOFETCH_CONF_EOF
-
-        # --- GPU override (appended only if GPU spoof is set) ---
+        # --- Generate the neofetch config as a SINGLE heredoc (robust, no append issues) ---
+        # All overrides are in ONE file to avoid sourcing problems from multiple appends.
+        # Build GPU and Memory sections as variables, then write everything at once.
+        local _neo_gpu_section=""
         if [ -n "$GPU_SPOOF_NAME" ]; then
-            # Escape special chars for safe embedding in a bash double-quoted string
             local esc_gpu_name
             esc_gpu_name=$(printf '%s' "$GPU_SPOOF_NAME" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g')
-            cat >> /tmp/_neofetch_conf << GPU_CONF_EOF
-
-# Override get_gpu: show spoofed NVIDIA GPU
+            _neo_gpu_section="
 get_gpu() {
-    gpu="${esc_gpu_name} [${GPU_SPOOF_VRAM}MB]"
-    gpu_brand="NVIDIA"
+    gpu=\"${esc_gpu_name} [${GPU_SPOOF_VRAM}MB]\"
+    gpu_brand=\"NVIDIA\"
 }
 get_gpu_legacy() { :; }
-GPU_CONF_EOF
+"
         fi
 
-        # --- Memory override: shows the CONTAINER's own RAM usage (not host's) ---
-        # ONLY for Fresh VPS Start mode. For System Default / Dedicated / Shared,
-        # neofetch's default get_memory() is used, which shows the REAL host RAM.
+        local _neo_mem_section=""
         if [ "$FRESH_MODE" == true ]; then
-        cat >> /tmp/_neofetch_conf << 'MEM_CONF_EOF'
-
-# Override get_memory: show container's own RAM (cgroup usage + RAM limit)
+            _neo_mem_section='
 get_memory() {
     local ram_limit=2048
-    if [ -f /etc/tasin-spoof/ram_limit_mb ]; then
-        ram_limit=$(cat /etc/tasin-spoof/ram_limit_mb 2>/dev/null | head -1 | tr -dc '0-9')
-    fi
+    [ -f /etc/tasin-spoof/ram_limit_mb ] && ram_limit=$(cat /etc/tasin-spoof/ram_limit_mb 2>/dev/null | head -1 | tr -dc "0-9")
     [ -z "$ram_limit" ] && ram_limit=2048
-
-    # Read real cgroup memory usage (bytes)
     local mem_usage_b=0
     if [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
-        mem_usage_b=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null | tr -dc '0-9')
+        mem_usage_b=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null | tr -dc "0-9")
     elif [ -f /sys/fs/cgroup/memory.current ]; then
-        mem_usage_b=$(cat /sys/fs/cgroup/memory.current 2>/dev/null | tr -dc '0-9')
+        mem_usage_b=$(cat /sys/fs/cgroup/memory.current 2>/dev/null | tr -dc "0-9")
     fi
     [ -z "$mem_usage_b" ] && mem_usage_b=0
-
     local mem_usage_mb=$(( mem_usage_b / 1024 / 1024 ))
     [ "$mem_usage_mb" -gt "$ram_limit" ] && mem_usage_mb=$ram_limit
-
-    # Format as neofetch expects: "XXXMiB / YYYMiB"
     if [ "$mem_usage_mb" -ge 1024 ]; then
         local used_gi=$(awk "BEGIN{printf \"%.1f\", $mem_usage_mb/1024}")
         local total_gi=$(awk "BEGIN{printf \"%.1f\", $ram_limit/1024}")
@@ -2532,55 +2485,73 @@ get_memory() {
         mem="${mem_usage_mb}MiB / ${ram_limit}MiB"
     fi
 }
-MEM_CONF_EOF
+'
         fi
 
-        # --- Terminal + CPU GHz override ---
-        # Force Terminal to show "sshx" (or the current TERM program)
-        # Force CPU to display "@ X.XXXGHz" format (neofetch default uses MHz sometimes)
-        cat >> /tmp/_neofetch_conf << 'TERM_CPU_EOF'
+        # Write the ENTIRE config as one heredoc — all overrides + print_info together
+        cat > /tmp/_neofetch_conf << NEOFETCH_EOF
+# TASIN Neofetch Config v4.2 — single-file, all overrides
+# Auto-generated by TASIN VPS Control Panel
 
-# Override get_term: show the terminal program (sshx / bash / etc.)
-get_term() {
-    term="sshx"
-    # If sshx isn't the parent, fall back to the parent process name
-    if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_TTY" ]; then
-        term="ssh"
-    fi
+# ─── Host: always show model name or hosting name ───
+get_host() {
+    host=""
+    [ -f /etc/tasin-spoof/product_name ] && host="\$(cat /etc/tasin-spoof/product_name 2>/dev/null | head -1 | tr -d '\r\n')"
+    [ -z "\$host" ] && [ -f /etc/tasin-spoof/hosting_name ] && host="\$(cat /etc/tasin-spoof/hosting_name 2>/dev/null | head -1 | tr -d '\r\n')"
+    [ -z "\$host" ] && host="MinePanel"
 }
 
-# Override get_cpu: format CPU speed as GHz (e.g. "@ 5.050GHz")
+# ─── Resolution: VPS resolution ───
+get_resolution() {
+    resolution="1920x1080"
+}
+
+# ─── Uptime: dynamic (container uptime + offset, no "up" prefix) ───
+get_uptime() {
+    local offset=60
+    [ -f /root/.fake_uptime_offset ] && offset=\$(cat /root/.fake_uptime_offset 2>/dev/null | head -1 | tr -dc '0-9')
+    [ -z "\$offset" ] && offset=60
+    local real_sec=\$(ps -p 1 -o etimes= 2>/dev/null | awk '{print \$1}' | tr -dc '0-9')
+    [ -z "\$real_sec" ] && real_sec=0
+    local total=\$(( real_sec + offset ))
+    local d=\$(( total / 86400 ))
+    local rem=\$(( total % 86400 ))
+    local h=\$(( rem / 3600 ))
+    local m=\$(( (rem % 3600) / 60 ))
+    uptime=""
+    [ "\$d" -gt 0 ] && { [ "\$d" -eq 1 ] && uptime="\${uptime}\${d} day, " || uptime="\${uptime}\${d} days, "; }
+    if [ "\$h" -gt 0 ] || [ "\$d" -gt 0 ]; then
+        [ "\$h" -eq 1 ] && uptime="\${uptime}1 hour, " || uptime="\${uptime}\${h} hours, "
+    fi
+    [ "\$m" -eq 1 ] && uptime="\${uptime}1 minute" || uptime="\${uptime}\${m} minutes"
+}
+
+# ─── Terminal: show sshx ───
+get_term() {
+    term="sshx"
+    [ -n "\$SSH_CONNECTION" ] && term="ssh"
+}
+
+# ─── CPU: format as @ X.XXXGHz ───
 get_cpu() {
-    local cpu_vendor=""
     local cpu_model=""
     local cpu_mhz=""
-    [ -f /etc/tasin-spoof/cpu_name ] && cpu_model=$(cat /etc/tasin-spoof/cpu_name 2>/dev/null | head -1 | tr -d '\r\n')
-    [ -f /etc/tasin-spoof/cpu_mhz ]  && cpu_mhz=$(cat /etc/tasin-spoof/cpu_mhz 2>/dev/null | head -1 | tr -dc '0-9.')
-    [ -z "$cpu_model" ] && cpu_model=$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
-    [ -z "$cpu_mhz" ]   && cpu_mhz=$(grep -m1 '^cpu MHz' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
-
-    # Strip the "(R)" / "(TM)" artifacts for cleaner display
-    cpu_model="${cpu_model//(R)/}"
-    cpu_model="${cpu_model//(TM)/}"
-    cpu_model="${cpu_model//  / }"
-
-    # Count cores
-    local cores=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
-    [ -z "$cores" ] && cores=1
-
-    # Convert MHz → GHz (3 decimal places)
+    [ -f /etc/tasin-spoof/cpu_name ] && cpu_model=\$(cat /etc/tasin-spoof/cpu_name 2>/dev/null | head -1 | tr -d '\r\n')
+    [ -f /etc/tasin-spoof/cpu_mhz ]  && cpu_mhz=\$(cat /etc/tasin-spoof/cpu_mhz 2>/dev/null | head -1 | tr -dc '0-9.')
+    [ -z "\$cpu_model" ] && cpu_model=\$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+    [ -z "\$cpu_mhz" ]   && cpu_mhz=\$(grep -m1 '^cpu MHz' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+    cpu_model="\${cpu_model//(R)/}"
+    cpu_model="\${cpu_model//(TM)/}"
+    cpu_model="\${cpu_model//  / }"
+    local cores=\$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+    [ -z "\$cores" ] && cores=1
     local ghz=""
-    if [ -n "$cpu_mhz" ]; then
-        ghz=$(awk "BEGIN{printf \"%.3f\", ${cpu_mhz}/1000}")
-    fi
-
-    if [ -n "$ghz" ]; then
-        cpu="${cpu_model} (${cores}) @ ${ghz}GHz"
+    [ -n "\$cpu_mhz" ] && ghz=\$(awk "BEGIN{printf \"%.3f\", \${cpu_mhz}/1000}")
+    if [ -n "\$ghz" ]; then
+        cpu="\${cpu_model} (\${cores}) @ \${ghz}GHz"
     else
-        cpu="${cpu_model} (${cores})"
+        cpu="\${cpu_model} (\${cores})"
     fi
-
-    # Set brand for logo
     if grep -qi 'AuthenticAMD' /proc/cpuinfo 2>/dev/null; then
         cpu_brand="AMD"
     else
@@ -2588,14 +2559,12 @@ get_cpu() {
     fi
 }
 get_cpu_legacy() { :; }
-TERM_CPU_EOF
 
-        # --- Override print_info to include Host, Terminal, Resolution, etc. ---
-        # neofetch's default print_info doesn't always show Host. This override
-        # explicitly lists every info line in the order the user wants.
-        cat >> /tmp/_neofetch_conf << 'PRINT_INFO_EOF'
+${_neo_gpu_section}
 
-# Override print_info: control exactly which lines appear and in what order
+${_neo_mem_section}
+
+# ─── print_info: exact line order ───
 print_info() {
     info title
     info underline
@@ -2612,12 +2581,14 @@ print_info() {
     info "Memory" memory
     info cols
 }
-PRINT_INFO_EOF
+NEOFETCH_EOF
 
         # Deploy config file into container at ~/.config/neofetch/config.conf
         docker exec "$VM_NAME" mkdir -p /root/.config/neofetch 2>/dev/null
         docker cp /tmp/_neofetch_conf "$VM_NAME":/root/.config/neofetch/config.conf
         docker exec "$VM_NAME" chmod 644 /root/.config/neofetch/config.conf 2>/dev/null
+        # Verify the config was written correctly
+        docker exec "$VM_NAME" bash -c "bash -n /root/.config/neofetch/config.conf 2>/dev/null || echo 'WARNING: neofetch config has syntax errors'" 2>/dev/null
         rm -f /tmp/_neofetch_conf
 
         # Clean up any old TASIN patches from /usr/bin/neofetch (from previous VM versions)
@@ -2628,6 +2599,85 @@ PRINT_INFO_EOF
             sed -i "/## TASIN_UPTIME_START ##/,/## TASIN_UPTIME_END ##/d" "$NEO" 2>/dev/null
             sed -i "/## TASIN_GPU_START ##/,/## TASIN_GPU_END ##/d" "$NEO" 2>/dev/null
         ' 2>/dev/null
+
+        # ========================================
+        # SCREENFETCH WRAPPER — shows spoofed CPU/host values
+        # screenfetch reads from /proc and /sys directly, so the neofetch config
+        # doesn't affect it. This wrapper shows the same spoofed values.
+        # ========================================
+        cat << 'SCREENFETCH_EOF' > /tmp/_fake_screenfetch
+#!/bin/bash
+# TASIN fake screenfetch — shows spoofed CPU, host, and uptime values
+
+# Read spoofed values
+CPU_NAME=$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+CPU_NAME="${CPU_NAME//(R)/}"
+CPU_NAME="${CPU_NAME//(TM)/}"
+CPU_MHZ=$(grep -m1 '^cpu MHz' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+CORES=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+[ -z "$CORES" ] && CORES=1
+
+# Host name
+HOST_NAME="MinePanel"
+[ -f /etc/tasin-spoof/product_name ] && HOST_NAME=$(cat /etc/tasin-spoof/product_name 2>/dev/null | head -1 | tr -d '\r\n')
+[ -z "$HOST_NAME" ] && [ -f /etc/tasin-spoof/hosting_name ] && HOST_NAME=$(cat /etc/tasin-spoof/hosting_name 2>/dev/null | head -1 | tr -d '\r\n')
+[ -z "$HOST_NAME" ] && HOST_NAME="MinePanel"
+
+# Uptime (dynamic)
+OFFSET=60
+[ -f /root/.fake_uptime_offset ] && OFFSET=$(cat /root/.fake_uptime_offset 2>/dev/null | head -1 | tr -dc '0-9')
+[ -z "$OFFSET" ] && OFFSET=60
+REAL_SEC=$(ps -p 1 -o etimes= 2>/dev/null | awk '{print $1}' | tr -dc '0-9')
+[ -z "$REAL_SEC" ] && REAL_SEC=0
+TOTAL=$(( REAL_SEC + OFFSET ))
+UP_D=$(( TOTAL / 86400 ))
+UP_H=$(( (TOTAL % 86400) / 3600 ))
+UP_M=$(( (TOTAL % 3600) / 60 ))
+UP_STR="${UP_D}d ${UP_H}h ${UP_M}m"
+
+# OS info
+. /etc/os-release 2>/dev/null
+OS_NAME="${NAME:-Linux}"
+OS_VER="${VERSION_ID:-}"
+KERNEL=$(uname -r)
+
+# RAM
+RAM_TOTAL=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+RAM_USED=$(free -m 2>/dev/null | awk '/^Mem:/{print $3}')
+
+# Convert MHz to GHz
+GHZ=""
+[ -n "$CPU_MHZ" ] && GHZ=$(awk "BEGIN{printf \"%.1f\", ${CPU_MHZ}/1000}")
+
+# Hostname
+HN=$(hostname)
+USER=$(whoami)
+
+# Print screenfetch-style output
+echo "                          ./+o+-       $USER@$HN"
+echo "                  yyyyy- -yyyyyy+      OS: $OS_NAME $OS_VER"
+echo "               ://+//////-yyyyyyo      Kernel: x86_64 Linux $KERNEL"
+echo "           .++ .:/++++++/-.+sss/\`      Uptime: $UP_STR"
+echo "         .:++o:  /++++++++/:--:/-      Host: $HOST_NAME"
+echo "        o:+o+:++.\`..\`\`\`.-/oo+++++/     Resolution: 1920x1080"
+echo "       .:+o:+o/.          \`+sssoo+/    Shell: bash $(bash --version 2>/dev/null | head -1 | awk '{print $4}' | sed 's/(//')"
+echo "  .++/+:+oo+o:\`             /sssooo.   CPU: $CPU_NAME @ ${CORES}x ${GHZ}GHz"
+echo " /+++//+:\`oo+o               /::--:.   RAM: ${RAM_USED}MiB / ${RAM_TOTAL}MiB"
+echo " \+/+o+++\`o++o               ++////."
+echo "  .++.o+++oo+:\`             /dddhhh."
+echo "       .+.o+oo:.          \`oddhhhh+"
+echo "        \+.++o+o\`\`-\`\`\`\`.:ohdhhhhh+"
+echo "         \`:o+++ \`ohhhhhhhhyo++os:"
+echo "           .o:\`.syhhhhhhh/.oo++o\`"
+echo "               /osyyyyyyo++ooo+++/"
+echo "                   \`\`\`\`\` +oo+++o\\:"
+echo "                          \`oo++."
+
+exit 0
+SCREENFETCH_EOF
+        docker cp /tmp/_fake_screenfetch "$VM_NAME":/usr/local/bin/screenfetch
+        docker exec "$VM_NAME" chmod +x /usr/local/bin/screenfetch 2>/dev/null
+        rm -f /tmp/_fake_screenfetch
 
 
         # 6. Apply GPU Spoofing (fake nvidia-smi + lspci + neofetch)
@@ -3228,7 +3278,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.1${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.2${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
