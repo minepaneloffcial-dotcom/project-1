@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v4.2.1 PREMIUM++
-#  v4.2.1: Removed --cpu-rt-runtime (causes 'kernel does not support CPU real-time scheduler')
+#  TASIN VPS CONTROL PANEL v4.2.2 PREMIUM++
+#  v4.2.2: Removed --cpu-rt-runtime AND --oom-kill-disable (both cause 'kernel does not support' errors)
 #  v4.2: Neofetch single heredoc, screenfetch wrapper, VPS performance boosted
 #  v4.1: DNS protection (fixes sshx going offline when installing Pterodactyl)
 #  v4.0: Removed fake lscpu, fixed dpkg error, removed IP/Locale from neofetch
@@ -1556,10 +1556,10 @@ create_vm() {
     if [ "$IS_FULL" != true ]; then
         _init_flag="--init"
     fi
-    # v4.2.1: Performance flags — cpu-shares=4096 (2x priority), blkio-weight=1000 (max disk I/O),
-    # shm-size=512m (larger shared memory), oom-kill-disable (protect VPS processes).
-    # NOTE: --cpu-rt-runtime removed (requires kernel RT scheduler, not available on most hosts)
-    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped $_init_flag --cpu-shares=4096 --blkio-weight=1000 --shm-size=512m --pids-limit=-1 --oom-kill-disable --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
+    # v4.2.2: Performance flags — only flags that work on ALL kernels.
+    # Removed --cpu-rt-runtime (needs RT scheduler) and --oom-kill-disable (needs CONFIG_MEMCG).
+    # Both caused 'kernel does not support' errors on some hosts.
+    CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped $_init_flag --cpu-shares=4096 --blkio-weight=1000 --shm-size=512m --pids-limit=-1 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
 
     # GPU PASSTHROUGH (real device, only if user chose one)
     if [ -n "$GPU_DEVICE" ]; then
@@ -1753,7 +1753,7 @@ create_vm() {
             docker rm -f "$VM_NAME" >/dev/null 2>&1
             # Rebuild CMD without --init (in case it was set) and without --privileged's
             # cgroup conflicts — use a simpler launch
-            CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cpu-shares=4096 --blkio-weight=1000 --shm-size=512m --pids-limit=-1 --oom-kill-disable --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
+            CMD="docker run -dt --name $VM_NAME --hostname $VM_ID_NAME --restart unless-stopped --cpu-shares=4096 --blkio-weight=1000 --shm-size=512m --pids-limit=-1 --cap-add=NET_ADMIN --dns 1.1.1.1 --dns 8.8.8.8 -v $DATA_DIR:/root:rw"
             if [ -n "$GPU_DEVICE" ]; then
                 if [ "$GPU_DEVICE" == "all" ]; then CMD="$CMD --gpus all"; else CMD="$CMD --gpus device=$GPU_DEVICE"; fi
                 CMD="$CMD --runtime=nvidia"
