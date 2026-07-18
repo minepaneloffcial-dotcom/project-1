@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v4.2.2 PREMIUM++
-#  v4.2.2: Removed --cpu-rt-runtime AND --oom-kill-disable (both cause 'kernel does not support' errors)
+#  TASIN VPS CONTROL PANEL v4.3 PREMIUM++
+#  v4.3: Custom Kernel Name option during VM creation (fake uname + neofetch + screenfetch)
+#  v4.2.2: Removed --cpu-rt-runtime AND --oom-kill-disable (kernel compatibility)
 #  v4.2: Neofetch single heredoc, screenfetch wrapper, VPS performance boosted
 #  v4.1: DNS protection (fixes sshx going offline when installing Pterodactyl)
 #  v4.0: Removed fake lscpu, fixed dpkg error, removed IP/Locale from neofetch
@@ -43,7 +44,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.2${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.3${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -721,7 +722,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.2${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.3${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -1089,6 +1090,28 @@ create_vm() {
         echo "$MODEL_NAME" > "$DMI_PRODUCT_FILE"
         echo "$MODEL_NAME" > "$DMI_VENDOR_FILE"
     fi
+
+    # ==========================================
+    # CUSTOM KERNEL NAME
+    # ==========================================
+    clear
+    echo -e "${PURPLE}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}SET CUSTOM KERNEL NAME${NC}"
+    echo -e "${PURPLE}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " This will appear as the 'Kernel' in neofetch, screenfetch, and uname."
+    echo -e " ${DIM}Leave blank to use the default (real host kernel).${NC}"
+    echo -e " ${DIM}Examples: 6.1.134-x86_64  |  5.15.0-91-generic  |  6.8.0-31-generic${NC}"
+    echo -n " Enter Kernel Name: "
+    read -r CUSTOM_KERNEL
+    CUSTOM_KERNEL="${CUSTOM_KERNEL//$'\r'/}"
+    CUSTOM_KERNEL=$(echo "$CUSTOM_KERNEL" | xargs)
+
+    if [ -n "$CUSTOM_KERNEL" ]; then
+        echo -e " ${GREEN}✔ Custom kernel set: ${CYAN}${CUSTOM_KERNEL}${NC}"
+    else
+        echo -e " ${DIM}✔ Using default host kernel${NC}"
+    fi
+    sleep 1
 
     # ==========================================
 
@@ -1694,6 +1717,9 @@ create_vm() {
     echo -e "  ${WHITE}Hostname:${NC}       ${CYAN}${VM_ID_NAME}${NC}"
     echo -e "  ${WHITE}VM Type:${NC}        ${CYAN}${VM_TYPE^^}${NC}"
     echo -e "  ${WHITE}OS Image:${NC}       ${CYAN}${IMG}${NC}"
+    if [ -n "$CUSTOM_KERNEL" ]; then
+        echo -e "  ${WHITE}Kernel:${NC}         ${CYAN}${CUSTOM_KERNEL}${NC}"
+    fi
     echo -e "  ${WHITE}CPU:${NC}             ${_pre_cpu_display}"
     echo -e "  ${WHITE}RAM:${NC}             ${_pre_ram_display}"
     echo -e "  ${WHITE}Disk:${NC}            ${CYAN}50GB${NC}"
@@ -2443,6 +2469,74 @@ SLEOF
         docker exec "$VM_NAME" bash -c "echo '${UPTIME_OFFSET}' > /root/.fake_uptime_offset" 2>/dev/null
         # Write the hosting name inside the container (fallback for get_host if no model name set)
         docker exec "$VM_NAME" bash -c "printf '%s\n' '${HOSTING_NAME:-MinePanel}' > /etc/tasin-spoof/hosting_name" 2>/dev/null
+        # Write the custom kernel name inside the container (if set)
+        if [ -n "$CUSTOM_KERNEL" ]; then
+            docker exec "$VM_NAME" bash -c "printf '%s\n' '${CUSTOM_KERNEL}' > /etc/tasin-spoof/kernel_version" 2>/dev/null
+
+            # ─── Fake uname wrapper — shows custom kernel version ───
+            # Saves real uname as /usr/bin/uname.real, installs wrapper at /usr/local/bin/uname
+            cat << 'UNAME_EOF' > /tmp/_fake_uname
+#!/bin/bash
+# TASIN fake uname — shows custom kernel version from /etc/tasin-spoof/kernel_version
+CUSTOM_KERNEL=""
+[ -f /etc/tasin-spoof/kernel_version ] && CUSTOM_KERNEL=$(cat /etc/tasin-spoof/kernel_version 2>/dev/null | head -1 | tr -d '\r\n')
+
+# If no custom kernel set, fall back to real uname
+if [ -z "$CUSTOM_KERNEL" ]; then
+    if [ -x /usr/bin/uname.real ]; then
+        exec /usr/bin/uname.real "$@"
+    else
+        exec /usr/bin/uname "$@"
+    fi
+fi
+
+# Parse arguments and return custom kernel where appropriate
+REAL_UNAME="/usr/bin/uname.real"
+[ ! -x "$REAL_UNAME" ] && REAL_UNAME="/usr/bin/uname"
+
+# Handle --kernel-name / -r (kernel release)
+if [ "$1" == "-r" ] || [ "$1" == "--kernel-release" ]; then
+    echo "$CUSTOM_KERNEL"
+    exit 0
+fi
+
+# Handle --kernel-name / -s (kernel name — usually "Linux")
+if [ "$1" == "-s" ] || [ "$1" == "--kernel-name" ]; then
+    echo "Linux"
+    exit 0
+fi
+
+# Handle -a (all info) — replace the kernel release part
+if [ "$1" == "-a" ] || [ "$1" == "--all" ]; then
+    # Get real info but swap the kernel version
+    REAL_INFO=$($REAL_UNAME -a 2>/dev/null)
+    # Replace the 3rd field (kernel release) with custom kernel
+    echo "$REAL_INFO" | awk -v newk="$CUSTOM_KERNEL" '{$3=newk; print}'
+    exit 0
+fi
+
+# Handle -v (kernel version/build info)
+if [ "$1" == "-v" ] || [ "$1" == "--kernel-version" ]; then
+    echo "#1 SMP $(date '+%a %b %d %H:%M:%S %Z %Y') ${CUSTOM_KERNEL}"
+    exit 0
+fi
+
+# No args or unknown — default to kernel release (most common usage)
+if [ -z "$1" ] || [ "$1" == "" ]; then
+    echo "$CUSTOM_KERNEL"
+    exit 0
+fi
+
+# Fall back to real uname for any other flags (-m, -p, -o, etc.)
+exec "$REAL_UNAME" "$@"
+UNAME_EOF
+            docker cp /tmp/_fake_uname "$VM_NAME":/usr/local/bin/uname
+            docker exec "$VM_NAME" chmod +x /usr/local/bin/uname 2>/dev/null
+            # Ensure /usr/local/bin is first in PATH
+            docker exec "$VM_NAME" bash -c "grep -q 'usr/local/bin' /etc/profile 2>/dev/null || echo 'export PATH=/usr/local/bin:\$PATH' >> /etc/profile" 2>/dev/null
+            rm -f /tmp/_fake_uname
+            echo -e " ${GREEN}✔ Custom kernel deployed: ${CYAN}${CUSTOM_KERNEL}${NC}"
+        fi
 
         # --- Generate the neofetch config as a SINGLE heredoc (robust, no append issues) ---
         # All overrides are in ONE file to avoid sourcing problems from multiple appends.
@@ -2503,6 +2597,14 @@ get_host() {
 # ─── Resolution: VPS resolution ───
 get_resolution() {
     resolution="1920x1080"
+}
+
+# ─── Kernel: show custom kernel if set, else real kernel ───
+get_kernel() {
+    if [ -f /etc/tasin-spoof/kernel_version ]; then
+        kernel="\$(cat /etc/tasin-spoof/kernel_version 2>/dev/null | head -1 | tr -d '\r\n')"
+    fi
+    [ -z "\$kernel" ] && kernel="\$(uname -r)"
 }
 
 # ─── Uptime: dynamic (container uptime + offset, no "up" prefix) ───
@@ -2638,7 +2740,10 @@ UP_STR="${UP_D}d ${UP_H}h ${UP_M}m"
 . /etc/os-release 2>/dev/null
 OS_NAME="${NAME:-Linux}"
 OS_VER="${VERSION_ID:-}"
+# Use custom kernel if set, else real kernel
 KERNEL=$(uname -r)
+[ -f /etc/tasin-spoof/kernel_version ] && KERNEL=$(cat /etc/tasin-spoof/kernel_version 2>/dev/null | head -1 | tr -d '\r\n')
+[ -z "$KERNEL" ] && KERNEL=$(uname -r)
 
 # RAM
 RAM_TOTAL=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
@@ -3277,7 +3382,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.2${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.3${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
