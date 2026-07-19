@@ -1,8 +1,10 @@
 #!/bin/bash
 
 # =====================================================
-#  TASIN VPS CONTROL PANEL v4.3 PREMIUM++
-#  v4.3: Custom Kernel Name option during VM creation (fake uname + neofetch + screenfetch)
+#  TASIN VPS CONTROL PANEL v4.4 PREMIUM++
+#  v4.4: Real disk size display, Fix Docker menu (OverlayFS + OCI), Auto Backup with
+#        intervals + cron, [B] Auto Backup Connecter for Google Drive/Dropbox/S3
+#  v4.3: Custom Kernel Name option during VM creation
 #  v4.2.2: Removed --cpu-rt-runtime AND --oom-kill-disable (kernel compatibility)
 #  v4.2: Neofetch single heredoc, screenfetch wrapper, VPS performance boosted
 #  v4.1: DNS protection (fixes sshx going offline when installing Pterodactyl)
@@ -44,7 +46,7 @@ PREMIUM='\033[1;38;5;93m'
 draw_banner() {
     echo -e "${GOLD}"
     echo -e "  ${AMBER}╔═══════════════════════════════════════════════════════╗${GOLD}"
-    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.3${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
+    echo -e "  ${GOLD}║${NC}  ${WHITE}⬡  ${BRIGHT_ORANGE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.4${NC}  ${PREMIUM}PREMIUM++${GOLD}  ║${NC}"
     echo -e "  ${GOLD}║${NC}  ${DIM}Docker Virtual Machine Management System${GOLD}              ║${NC}"
     echo -e "  ${AMBER}╚═══════════════════════════════════════════════════════╝${NC}"
 }
@@ -643,34 +645,137 @@ check_real_kvm() {
 # ==================================================
 
 fix_docker() {
-    clear
-    echo -e "${YELLOW}┌──────────────────────────────────────────────────┐${NC}"
-    echo -e "    ${WHITE}DOCKER OVERLAYFS REPAIR TOOL${NC}"
-    echo -e "${YELLOW}└──────────────────────────────────────────────────┘${NC}"
-    echo -e " ${RED}Error:${NC} 'overlayfs' or 'invalid argument' occurs on OpenVZ/LXC VPS."
-    echo -e " ${GREEN}Fix:${NC} Switch Docker storage driver to 'vfs' (100% compatible)."
-    echo -e ""
-    echo -n " Do you want to apply this fix? (y/n): "
-    read -r confirm
+    while true; do
+        clear
+        echo -e "${YELLOW}┌──────────────────────────────────────────────────┐${NC}"
+        echo -e "    ${WHITE}DOCKER REPAIR TOOL${NC}"
+        echo -e "${YELLOW}└──────────────────────────────────────────────────┘${NC}"
+        echo -e " ${DIM}Choose the fix that matches your error:${NC}"
+        echo -e ""
+        echo -e " 1) ${GREEN}Fix OverlayFS${NC}"
+        echo -e "    ${DIM}For: 'overlayfs' / 'invalid argument' errors (OpenVZ/LXC VPS)${NC}"
+        echo -e "    ${DIM}→ Switches Docker storage driver to 'vfs' (100% compatible)${NC}"
+        echo -e ""
+        echo -e " 2) ${CYAN}Fix OCI Runtime${NC}"
+        echo -e "    ${DIM}For: 'OCI runtime create failed' / 'unsafe procfs detected' /${NC}"
+        echo -e "    ${DIM}    'ip_unprivileged_port_start' / 'invalid cross-device link'${NC}"
+        echo -e "    ${DIM}→ Disables problematic sysctls in Docker daemon.json${NC}"
+        echo -e ""
+        echo -e " 0) ${RED}Back${NC}"
+        echo -e "${YELLOW}──────────────────────────────────────────────────${NC}"
+        echo -n " Select [0-2]: "
+        read -r fix_choice
+        fix_choice="${fix_choice//$'\r'/}"
 
-    if [ "$confirm" == "y" ]; then
-        log_msg "Applying Docker VFS Fix..."
-        systemctl stop docker >/dev/null 2>&1
-        systemctl stop containerd >/dev/null 2>&1
-        mkdir -p /etc/docker
-        echo '{ "storage-driver": "vfs" }' > /etc/docker/daemon.json
-        systemctl start containerd >/dev/null 2>&1
-        systemctl start docker >/dev/null 2>&1
-
-        if systemctl is-active --quiet docker; then
-            echo -e " ${GREEN}✔ Docker fixed and restarted successfully!${NC}"
-            log_msg "Docker VFS Fix applied successfully."
-        else
-            echo -e " ${RED}✘ Docker failed to start. Check 'systemctl status docker'.${NC}"
-            log_msg "Docker VFS Fix FAILED."
-        fi
-        sleep 3
-    fi
+        case "$fix_choice" in
+            1)
+                clear
+                echo -e "${YELLOW}┌──────────────────────────────────────────────────┐${NC}"
+                echo -e "    ${WHITE}FIX 1: OVERLAYFS REPAIR${NC}"
+                echo -e "${YELLOW}└──────────────────────────────────────────────────┘${NC}"
+                echo -e " ${RED}Error:${NC} 'overlayfs' or 'invalid argument' occurs on OpenVZ/LXC VPS."
+                echo -e " ${GREEN}Fix:${NC} Switch Docker storage driver to 'vfs' (100% compatible)."
+                echo -e ""
+                echo -n " Apply this fix? (y/n): "
+                read -r confirm
+                if [ "$confirm" == "y" ]; then
+                    log_msg "Applying Docker VFS Fix..."
+                    systemctl stop docker >/dev/null 2>&1
+                    systemctl stop containerd >/dev/null 2>&1
+                    mkdir -p /etc/docker
+                    echo '{ "storage-driver": "vfs" }' > /etc/docker/daemon.json
+                    systemctl start containerd >/dev/null 2>&1
+                    systemctl start docker >/dev/null 2>&1
+                    if systemctl is-active --quiet docker; then
+                        echo -e " ${GREEN}✔ Docker fixed and restarted successfully!${NC}"
+                        log_msg "Docker VFS Fix applied successfully."
+                    else
+                        echo -e " ${RED}✘ Docker failed to start. Check 'systemctl status docker'.${NC}"
+                        log_msg "Docker VFS Fix FAILED."
+                    fi
+                    sleep 3
+                fi
+                ;;
+            2)
+                clear
+                echo -e "${YELLOW}┌──────────────────────────────────────────────────┐${NC}"
+                echo -e "    ${WHITE}FIX 2: OCI RUNTIME REPAIR${NC}"
+                echo -e "${YELLOW}└──────────────────────────────────────────────────┘${NC}"
+                echo -e " ${RED}Error:${NC} 'OCI runtime create failed: unable to start container process:"
+                echo -e "         error during container init: open sysctl"
+                echo -e "         net.ipv4.ip_unprivileged_port_start file: unsafe procfs detected'"
+                echo -e ""
+                echo -e " ${GREEN}Fix:${NC} Configure Docker to skip unsafe sysctls + disable iptables."
+                echo -e " ${DIM}This is required on kernels that block /proc/sys access in containers.${NC}"
+                echo -e ""
+                echo -n " Apply this fix? (y/n): "
+                read -r confirm
+                if [ "$confirm" == "y" ]; then
+                    log_msg "Applying Docker OCI Fix..."
+                    systemctl stop docker >/dev/null 2>&1
+                    systemctl stop containerd >/dev/null 2>&1
+                    mkdir -p /etc/docker
+                    # Write daemon.json with all the OCI-friendly settings
+                    cat > /etc/docker/daemon.json << 'DOCKERCONF'
+{
+    "storage-driver": "vfs",
+    "iptables": false,
+    "ip-masq": false,
+    "userland-proxy": false,
+    "no-new-privileges": false,
+    "default-runtime": "runc",
+    "runtimes": {
+        "runc": {
+            "path": "runc"
+        }
+    },
+    "default-ipc-mode": "private",
+    "default-cgroupns-mode": "host",
+    "default-shm-size": "64M",
+    "default-ulimits": {
+        "nofile": {
+            "Name": "nofile",
+            "Hard": 65536,
+            "Soft": 1024
+        }
+    },
+    "init": false
+}
+DOCKERCONF
+                    # Also fix containerd config
+                    mkdir -p /etc/containerd
+                    cat > /etc/containerd/config.toml << 'CONTAINERDCONF'
+version = 2
+[plugins."io.containerd.grpc.v1.cri"]
+  [plugins."io.containerd.grpc.v1.cri".containerd]
+    default_runtime_name = "runc"
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+      runtime_type = "io.containerd.runc.v2"
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+        SystemdCgroup = false
+        IoUid = 0
+        IoGid = 0
+[plugins."io.containerd.runtime.v1.linux"]
+  shim = "containerd-shim"
+  runtime = "runc"
+CONTAINERDCONF
+                    systemctl start containerd >/dev/null 2>&1
+                    systemctl start docker >/dev/null 2>&1
+                    if systemctl is-active --quiet docker; then
+                        echo -e " ${GREEN}✔ Docker OCI fix applied successfully!${NC}"
+                        echo -e " ${DIM}Try creating your VM again — the sysctl error should be gone.${NC}"
+                        log_msg "Docker OCI Fix applied successfully."
+                    else
+                        echo -e " ${RED}✘ Docker failed to start. Check 'systemctl status docker'.${NC}"
+                        log_msg "Docker OCI Fix FAILED."
+                    fi
+                    sleep 4
+                fi
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
 }
 
 # ==================================================
@@ -722,7 +827,7 @@ manage_vm_menu() {
         local _ip_pad=$(( 42 - ${#vm_ip} ))
 
         echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.3${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+        echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VM MANAGER${NC}  ${DIM}v4.4${NC}            ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
         echo -e "${GOLD}║${NC}  ${DIM}Docker Virtual Machine Control Panel${NC}                     ${GOLD}║${NC}"
         echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GOLD}║${NC}  ${WHITE}VM:${NC} ${CYAN}${display_name}${NC}$(_pad $_name_pad)  ${status_badge}  ${vm_type_tag}     ${GOLD}║${NC}"
@@ -1212,6 +1317,52 @@ create_vm() {
     sleep 1
 
     # ==========================================
+    # AUTO BACKUP SETUP
+    # ==========================================
+    clear
+    BACKUP_ENABLED=false
+    BACKUP_INTERVAL=""
+    echo -e "${LIME}┌──────────────────────────────────────────────────┐${NC}"
+    echo -e "         ${WHITE}AUTO BACKUP SETUP${NC}"
+    echo -e "${LIME}└──────────────────────────────────────────────────┘${NC}"
+    echo -e " ${DIM}Automatically backs up the full VPS (Docker container + data) at a set interval.${NC}"
+    echo -e " ${DIM}Backups are saved to ${CYAN}/root/.tasin/backups/<vps-name>/<timestamp>/${NC}${NC}"
+    echo -e ""
+    printf " Do you need Auto Backup? (y/n): "
+    read -r backup_yes
+    backup_yes="${backup_yes//$'\r'/}"
+    backup_yes="${backup_yes,,}"
+
+    if [[ "$backup_yes" == "y" ]]; then
+        BACKUP_ENABLED=true
+        echo -e ""
+        echo -e " ${YELLOW}Select backup interval:${NC}"
+        echo -e "  1) ${CYAN}Every 1 minute${NC}   ${DIM}(for testing / critical systems)${NC}"
+        echo -e "  2) ${CYAN}Every 1 hour${NC}     ${DIM}(recommended for production)${NC}"
+        echo -e "  3) ${CYAN}Every 1 day${NC}      ${DIM}(daily backup)${NC}"
+        echo -e "  4) ${CYAN}Every 1 week${NC}     ${DIM}(weekly backup)${NC}"
+        echo -e "  5) ${CYAN}Every 1 month${NC}    ${DIM}(monthly backup)${NC}"
+        echo -e "  6) ${CYAN}Every 1 year${NC}     ${DIM}(yearly archive)${NC}"
+        echo -e ""
+        printf " Selection [1-6]: "
+        read -r backup_sel
+        backup_sel="${backup_sel//$'\r'/}"
+        case "$backup_sel" in
+            1) BACKUP_INTERVAL="1min"  ;;
+            2) BACKUP_INTERVAL="1hour" ;;
+            3) BACKUP_INTERVAL="1day"  ;;
+            4) BACKUP_INTERVAL="1week" ;;
+            5) BACKUP_INTERVAL="1month";;
+            6) BACKUP_INTERVAL="1year" ;;
+            *) BACKUP_INTERVAL="1hour" ;;
+        esac
+        echo -e " ${GREEN}✔ Auto Backup enabled: every ${BACKUP_INTERVAL}${NC}"
+    else
+        echo -e " ${DIM}✔ Auto Backup disabled (default)${NC}"
+    fi
+    sleep 1
+
+    # ==========================================
     # GPU SETUP
     # ==========================================
     clear
@@ -1690,8 +1841,17 @@ create_vm() {
         fi
     fi
 
-    # Price calculation
-    local _p_cpu=0; local _p_ram=0; local _p_disk=5; local _p_speed=0; local _p_gpu=0; local _p_type=0
+    # Disk display — use REAL host disk size (not hardcoded 50GB)
+    local _host_disk_gb=50
+    local _host_disk_raw=$(df -BG / 2>/dev/null | awk 'NR==2{print $2}' | tr -dc '0-9')
+    [ -n "$_host_disk_raw" ] && _host_disk_gb=$_host_disk_raw
+    [ -z "$_host_disk_gb" ] && _host_disk_gb=50
+    local _pre_disk_display="${CYAN}${_host_disk_gb}GB${NC}"
+
+    # Price calculation (disk price scales with size: $1 per 10GB)
+    local _p_cpu=0; local _p_ram=0; local _p_disk=0; local _p_speed=0; local _p_gpu=0; local _p_type=0
+    _p_disk=$(( _host_disk_gb / 10 ))
+    [ "$_p_disk" -lt 1 ] && _p_disk=5
     [[ "$_pre_display_cores" =~ ^[0-9]+$ ]] && _p_cpu=$(( _pre_display_cores * 2 ))
     local _p_ram_gb=0
     local _p_ram_num=$(echo "$_pre_display_ram" | tr -dc '0-9')
@@ -1722,7 +1882,7 @@ create_vm() {
     fi
     echo -e "  ${WHITE}CPU:${NC}             ${_pre_cpu_display}"
     echo -e "  ${WHITE}RAM:${NC}             ${_pre_ram_display}"
-    echo -e "  ${WHITE}Disk:${NC}            ${CYAN}50GB${NC}"
+    echo -e "  ${WHITE}Disk:${NC}            ${_pre_disk_display}"
     echo -e "  ${WHITE}Network:${NC}        ${_pre_speed_display}"
     echo -e "  ${WHITE}GPU:${NC}             ${_pre_gpu_display}"
     echo -e "  ${WHITE}Root Password:${NC}   ${RED}${VM_PASS}${NC}"
@@ -1731,7 +1891,7 @@ create_vm() {
     echo -e "${GOLD}───────────────────────────────────────────────────────────────${NC}"
     printf  "  ${WHITE}CPU${NC} (%s cores)              ${GREEN}\$%i${NC}/mo\n" "$_pre_display_cores" "$_p_cpu"
     printf  "  ${WHITE}RAM${NC} (%sGB)                   ${GREEN}\$%i${NC}/mo\n" "$_p_ram_gb" "$_p_ram"
-    printf  "  ${WHITE}Disk${NC} (50GB SSD)              ${GREEN}\$%i${NC}/mo\n" "$_p_disk"
+    printf  "  ${WHITE}Disk${NC} (%sGB SSD)              ${GREEN}\$%i${NC}/mo\n" "$_host_disk_gb" "$_p_disk"
     printf  "  ${WHITE}Network${NC}                      ${GREEN}\$%i${NC}/mo\n" "$_p_speed"
     printf  "  ${WHITE}GPU${NC}                          ${GREEN}\$%i${NC}/mo\n" "$_p_gpu"
     printf  "  ${WHITE}VDS Surcharge${NC}                ${GREEN}\$%i${NC}/mo\n" "$_p_type"
@@ -2917,6 +3077,141 @@ LSHWEOF
         fi
 
         # ==========================================
+        # AUTO BACKUP SETUP (if user enabled it)
+        # ==========================================
+        if [ "$BACKUP_ENABLED" == true ]; then
+            echo -e " ${BLUE}∞${NC} Setting up Auto Backup..."
+
+            # Create backup directories
+            local BACKUP_BASE="/root/.tasin/backups"
+            local VM_BACKUP_DIR="$BACKUP_BASE/$VM_ID_NAME"
+            mkdir -p "$VM_BACKUP_DIR"
+
+            # Save backup config
+            echo "$BACKUP_INTERVAL" > "$TASIN_VMS/$VM_ID_NAME/backup_interval.info"
+            echo "enabled" > "$TASIN_VMS/$VM_ID_NAME/backup_status.info"
+
+            # Create the backup script
+            cat > "/root/.tasin/scripts/backup_${VM_ID_NAME}.sh" << BACKUPSCRIPT
+#!/bin/bash
+# TASIN Auto Backup for $VM_ID_NAME
+# Backs up Docker container + data directory to /root/.tasin/backups/$VM_ID_NAME/
+
+VM_NAME="$VM_NAME"
+VM_ID_NAME="$VM_ID_NAME"
+DATA_DIR="/root/.tasin/data/$VM_ID_NAME"
+BACKUP_DIR="/root/.tasin/backups/$VM_ID_NAME"
+TIMESTAMP=\$(date '+%Y%m%d_%H%M%S')
+BACKUP_PATH="\$BACKUP_DIR/\$TIMESTAMP"
+
+mkdir -p "\$BACKUP_PATH"
+
+# Stop the container temporarily for a consistent backup
+docker stop "\$VM_NAME" >/dev/null 2>&1
+sleep 2
+
+# 1. Save container as image (full filesystem state)
+docker commit "\$VM_NAME" "tasin-backup/\$VM_ID_NAME:\$TIMESTAMP" >/dev/null 2>&1
+docker save "tasin-backup/\$VM_ID_NAME:\$TIMESTAMP" -o "\$BACKUP_PATH/container_image.tar" >/dev/null 2>&1
+docker rmi "tasin-backup/\$VM_ID_NAME:\$TIMESTAMP" >/dev/null 2>&1
+
+# 2. Copy the data directory (bind-mount source = /root)
+if [ -d "\$DATA_DIR" ]; then
+    cp -a "\$DATA_DIR" "\$BACKUP_PATH/data" 2>/dev/null
+fi
+
+# 3. Save container config (image, env, ports, etc.)
+docker inspect "\$VM_NAME" > "\$BACKUP_PATH/container_config.json" 2>/dev/null
+
+# 4. Save VM info (password, type, hostname)
+cat > "\$BACKUP_PATH/vm_info.txt" << VMINFO
+VM_NAME=\$VM_NAME
+VM_ID_NAME=\$VM_ID_NAME
+TIMESTAMP=\$TIMESTAMP
+BACKUP_DATE=\$(date)
+VMINFO
+
+# 5. Create a restore script
+cat > "\$BACKUP_PATH/restore.sh" << 'RESTORE'
+#!/bin/bash
+# TASIN Restore Script
+cd "\$(dirname "\$0")" || exit 1
+VM_ID_NAME=\$(grep VM_ID_NAME vm_info.txt | cut -d= -f2)
+VM_NAME="tasin-vm-\$VM_ID_NAME"
+echo "Restoring \$VM_NAME..."
+docker rm -f "\$VM_NAME" 2>/dev/null
+docker load -i container_image.tar
+docker run -dt --name "\$VM_NAME" --hostname "\$VM_ID_NAME" \$(jq -r '.[0].Config.Image' container_config.json 2>/dev/null || echo "ubuntu:22.04")
+if [ -d data ]; then
+    docker cp data/. "\$VM_NAME":/root/
+fi
+echo "Restore complete!"
+RESTORE
+chmod +x "\$BACKUP_PATH/restore.sh" 2>/dev/null
+
+# 6. Compress the backup to save space
+cd "\$BACKUP_DIR"
+tar -czf "\$TIMESTAMP.tar.gz" "\$TIMESTAMP" 2>/dev/null
+rm -rf "\$TIMESTAMP" 2>/dev/null
+
+# 7. Restart the container
+docker start "\$VM_NAME" >/dev/null 2>&1
+
+# 8. Auto-upload to connected drive (if configured)
+DRIVE_CONFIG="/root/.tasin/drive/\$VM_ID_NAME.conf"
+if [ -f "\$DRIVE_CONFIG" ]; then
+    . "\$DRIVE_CONFIG"
+    if [ -n "\$DRIVE_TYPE" ] && [ -n "\$DRIVE_TOKEN" ]; then
+        case "\$DRIVE_TYPE" in
+            gdrive)
+                if command -v rclone >/dev/null 2>&1; then
+                    rclone copy "\$BACKUP_DIR/\$TIMESTAMP.tar.gz" "gdrive:tasin-backups/\$VM_ID_NAME/" --quiet 2>/dev/null
+                fi
+                ;;
+            dropbox)
+                if command -v rclone >/dev/null 2>&1; then
+                    rclone copy "\$BACKUP_DIR/\$TIMESTAMP.tar.gz" "dropbox:tasin-backups/\$VM_ID_NAME/" --quiet 2>/dev/null
+                fi
+                ;;
+            s3)
+                if command -v rclone >/dev/null 2>&1; then
+                    rclone copy "\$BACKUP_DIR/\$TIMESTAMP.tar.gz" "s3:tasin-backups/\$VM_ID_NAME/" --quiet 2>/dev/null
+                fi
+                ;;
+        esac
+    fi
+fi
+
+# 9. Keep only the last 10 backups (delete older ones)
+cd "\$BACKUP_DIR"
+ls -1t *.tar.gz 2>/dev/null | tail -n +11 | while read -r old_backup; do
+    rm -f "\$old_backup" 2>/dev/null
+done
+BACKUPSCRIPT
+            chmod +x "/root/.tasin/scripts/backup_${VM_ID_NAME}.sh"
+            mkdir -p /root/.tasin/scripts
+
+            # Set up cron job based on interval
+            local CRON_SCHEDULE=""
+            case "$BACKUP_INTERVAL" in
+                1min)   CRON_SCHEDULE="* * * * *" ;;
+                1hour)  CRON_SCHEDULE="0 * * * *" ;;
+                1day)   CRON_SCHEDULE="0 0 * * *" ;;
+                1week)  CRON_SCHEDULE="0 0 * * 0" ;;
+                1month) CRON_SCHEDULE="0 0 1 * *" ;;
+                1year)  CRON_SCHEDULE="0 0 1 1 *" ;;
+                *)      CRON_SCHEDULE="0 * * * *" ;;
+            esac
+
+            # Add to crontab (preserve existing jobs)
+            (crontab -l 2>/dev/null | grep -v "backup_${VM_ID_NAME}.sh"; echo "$CRON_SCHEDULE /root/.tasin/scripts/backup_${VM_ID_NAME}.sh >> /root/.tasin/backups/${VM_ID_NAME}/backup.log 2>&1") | crontab -
+            log_msg "Auto backup configured for $VM_NAME (interval: $BACKUP_INTERVAL, schedule: $CRON_SCHEDULE)"
+            echo -e " ${GREEN}✔ Auto Backup configured: every ${BACKUP_INTERVAL}${NC}"
+            echo -e " ${DIM}  Backups saved to: /root/.tasin/backups/${VM_ID_NAME}/${NC}"
+            echo -e " ${DIM}  Keeps last 10 backups (older ones auto-deleted)${NC}"
+        fi
+
+        # ==========================================
         # SAVE STATE & SYNC TO REMOTE (SILENT)
         # ==========================================
         local effective_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$VM_NAME" 2>/dev/null)
@@ -3253,6 +3548,210 @@ live_vm_performance() {
 }
 
 # ==================================================
+#       AUTO BACKUP CONNECTER ([B] Premium Tool)
+# ==================================================
+backup_connecter() {
+    while true; do
+        clear
+        echo -e "${LIME}╔═══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${LIME}║${NC}  ${WHITE}◆ AUTO BACKUP CONNECTER${NC}  ${PREMIUM}PREMIUM++${NC}              ${LIME}║${NC}"
+        echo -e "${LIME}╠═══════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${LIME}║${NC}  ${DIM}Connect VPS backups to cloud storage (Google Drive,${NC}      ${LIME}║${NC}"
+        echo -e "${LIME}║${NC}  ${DIM}Dropbox, S3). Backups auto-upload after each run.${NC}       ${LIME}║${NC}"
+        echo -e "${LIME}╚═══════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+
+        # List all VMs with their backup status
+        mapfile -t VMS < <(docker ps -a --format '{{.Names}}' | grep "^tasin-vm-")
+
+        if [ ${#VMS[@]} -eq 0 ]; then
+            echo -e "  ${YELLOW}No VMs created yet.${NC}"
+            echo -e ""
+            echo -n " Press Enter to go back... "
+            read -r
+            return
+        fi
+
+        echo -e "  ${BOLD}#  VM NAME                   BACKUP STATUS    INTERVAL    DRIVE${NC}"
+        echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
+        i=1
+        for vm in "${VMS[@]}"; do
+            DISPLAY_NAME=${vm#tasin-vm-}
+            BACKUP_STATUS="Disabled"
+            BACKUP_INTERVAL="-"
+            DRIVE_STATUS="${DIM}Not connected${NC}"
+
+            if [ -f "/root/.tasin/vms/${DISPLAY_NAME}/backup_status.info" ]; then
+                BACKUP_STATUS="${GREEN}Enabled${NC}"
+                BACKUP_INTERVAL=$(cat "/root/.tasin/vms/${DISPLAY_NAME}/backup_interval.info" 2>/dev/null)
+            fi
+
+            if [ -f "/root/.tasin/drive/${DISPLAY_NAME}.conf" ]; then
+                DRIVE_TYPE_VAL=$(grep DRIVE_TYPE "/root/.tasin/drive/${DISPLAY_NAME}.conf" 2>/dev/null | cut -d= -f2)
+                case "$DRIVE_TYPE_VAL" in
+                    gdrive)  DRIVE_STATUS="${GREEN}Google Drive${NC}" ;;
+                    dropbox) DRIVE_STATUS="${BLUE}Dropbox${NC}" ;;
+                    s3)      DRIVE_STATUS="${YELLOW}S3${NC}" ;;
+                esac
+            fi
+
+            pad_name=$(printf '%-24s' "$DISPLAY_NAME")
+            pad_num=$(printf '%-2s' "$i")
+            echo -e "  ${WHITE}${pad_num}${NC} ${CYAN}${pad_name}${NC} ${BACKUP_STATUS}    ${BACKUP_INTERVAL}    ${DRIVE_STATUS}"
+            ((i++))
+        done
+        echo -e "  ${DIM}──────────────────────────────────────────────────────────────${NC}"
+        echo ""
+        echo -e "  ${YELLOW}Select a VM number to connect its backups to a drive${NC}"
+        echo -e "  ${DIM}(Only VMs with Auto Backup enabled can be connected)${NC}"
+        echo -e "  ${RED}0) Back${NC}"
+        echo -n " Select: "
+        read -r sel
+        sel="${sel//$'\r'/}"
+
+        if [ "$sel" == "0" ] || [ -z "$sel" ]; then
+            return
+        fi
+
+        if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -gt 0 ] && [ "$sel" -le "${#VMS[@]}" ]; then
+            local SELECTED_VM="${VMS[$((sel-1))]}"
+            local SEL_DISPLAY=${SELECTED_VM#tasin-vm-}
+
+            # Check if backup is enabled for this VM
+            if [ ! -f "/root/.tasin/vms/${SEL_DISPLAY}/backup_status.info" ]; then
+                echo -e " ${RED}✘ Auto Backup is not enabled for '${SEL_DISPLAY}'.${NC}"
+                echo -e " ${YELLOW}Reinstall the VM and enable Auto Backup to use this feature.${NC}"
+                sleep 3
+                continue
+            fi
+
+            local VM_INTERVAL=$(cat "/root/.tasin/vms/${SEL_DISPLAY}/backup_interval.info" 2>/dev/null)
+
+            clear
+            echo -e "${LIME}┌──────────────────────────────────────────────────┐${NC}"
+            echo -e "    ${WHITE}CONNECT: ${CYAN}${SEL_DISPLAY}${NC}"
+            echo -e "${LIME}└──────────────────────────────────────────────────┘${NC}"
+            echo -e " ${WHITE}Current Backup Interval:${NC} ${GREEN}${VM_INTERVAL}${NC}"
+            echo -e " ${WHITE}Backup Location:${NC} ${CYAN}/root/.tasin/backups/${SEL_DISPLAY}/${NC}"
+            echo ""
+            echo -e " ${YELLOW}Select a cloud drive to connect:${NC}"
+            echo -e "  1) ${GREEN}Google Drive${NC}  ${DIM}(15GB free, most popular)${NC}"
+            echo -e "  2) ${BLUE}Dropbox${NC}        ${DIM}(2GB free, simple)${NC}"
+            echo -e "  3) ${YELLOW}Amazon S3${NC}      ${DIM}(paid, enterprise)${NC}"
+            echo -e "  4) ${RED}Disconnect${NC}    ${DIM}(remove drive connection)${NC}"
+            echo -e "  0) Back"
+            echo -n " Select [0-4]: "
+            read -r drive_sel
+            drive_sel="${drive_sel//$'\r'/}"
+
+            case "$drive_sel" in
+                1|2|3)
+                    local DRIVE_NAME=""
+                    case "$drive_sel" in
+                        1) DRIVE_NAME="Google Drive" ; DRIVE_TYPE_VAL="gdrive" ;;
+                        2) DRIVE_NAME="Dropbox"      ; DRIVE_TYPE_VAL="dropbox" ;;
+                        3) DRIVE_NAME="Amazon S3"    ; DRIVE_TYPE_VAL="s3" ;;
+                    esac
+
+                    clear
+                    echo -e "${LIME}┌──────────────────────────────────────────────────┐${NC}"
+                    echo -e "    ${WHITE}AUTHENTICATE: ${CYAN}${DRIVE_NAME}${NC}"
+                    echo -e "${LIME}└──────────────────────────────────────────────────┘${NC}"
+                    echo ""
+                    echo -e " ${YELLOW}To connect ${DRIVE_NAME}, you need:${NC}"
+                    echo -e "  ${DIM}1. rclone installed (we'll install it if missing)${NC}"
+                    echo -e "  ${DIM}2. A ${DRIVE_NAME} account${NC}"
+                    echo -e "  ${DIM}3. An authorization token (rclone will guide you)${NC}"
+                    echo ""
+                    echo -e " ${YELLOW}Steps:${NC}"
+                    echo -e "  ${DIM}1. We install rclone${NC}"
+                    echo -e "  ${DIM}2. rclone opens a browser link for you to authorize${NC}"
+                    echo -e "  ${DIM}3. You paste the token back here${NC}"
+                    echo -e "  ${DIM}4. Backups auto-upload to ${DRIVE_NAME} from now on${NC}"
+                    echo ""
+                    echo -n " Continue with ${DRIVE_NAME} auth? (y/n): "
+                    read -r auth_confirm
+                    auth_confirm="${auth_confirm//$'\r'/}"
+                    auth_confirm="${auth_confirm,,}"
+
+                    if [ "$auth_confirm" != "y" ]; then
+                        continue
+                    fi
+
+                    # Install rclone if missing
+                    if ! command -v rclone >/dev/null 2>&1; then
+                        echo -e " ${BLUE}∞${NC} Installing rclone..."
+                        curl -fsSL https://rclone.org/install.sh 2>/dev/null | bash >/dev/null 2>&1
+                        if ! command -v rclone >/dev/null 2>&1; then
+                            echo -e " ${RED}✘ Failed to install rclone. Try: curl https://rclone.org/install.sh | bash${NC}"
+                            sleep 3
+                            continue
+                        fi
+                    fi
+
+                    echo -e " ${GREEN}✔ rclone installed${NC}"
+                    echo ""
+
+                    # Configure rclone remote
+                    echo -e " ${YELLOW}Setting up rclone remote '${DRIVE_TYPE_VAL}'...${NC}"
+                    echo -e " ${DIM}rclone will now configure the connection. Follow the prompts.${NC}"
+                    echo -e " ${DIM}For most prompts, just press Enter to accept defaults.${NC}"
+                    echo -e " ${DIM}When asked for 'config_storage', choose 'y' to auto-config.${NC}"
+                    echo -e " ${DIM}A browser window will open for you to authorize ${DRIVE_NAME}.${NC}"
+                    echo ""
+                    echo -n " Press Enter to start rclone config... "
+                    read -r
+
+                    # Run rclone config
+                    rclone config create "$DRIVE_TYPE_VAL" "$DRIVE_TYPE_VAL" 2>&1 | head -20
+
+                    # Test the connection
+                    if rclone lsd "${DRIVE_TYPE_VAL}:" >/dev/null 2>&1; then
+                        echo -e " ${GREEN}✔ ${DRIVE_NAME} connected successfully!${NC}"
+                    else
+                        echo -e " ${YELLOW}⚠ Could not verify connection. You may need to complete setup manually.${NC}"
+                        echo -e " ${DIM}Run 'rclone config' to finish.${NC}"
+                    fi
+
+                    # Save drive config
+                    mkdir -p /root/.tasin/drive
+                    cat > "/root/.tasin/drive/${SEL_DISPLAY}.conf" << DRIVECONF
+DRIVE_TYPE="${DRIVE_TYPE_VAL}"
+DRIVE_NAME="${DRIVE_NAME}"
+DRIVE_REMOTE="${DRIVE_TYPE_VAL}"
+DRIVE_PATH="tasin-backups/${SEL_DISPLAY}"
+DRIVECONF
+
+                    log_msg "Drive connected for ${SEL_DISPLAY}: ${DRIVE_NAME}"
+                    echo -e ""
+                    echo -e " ${GREEN}✔ ${SEL_DISPLAY} backups will now auto-upload to ${DRIVE_NAME}${NC}"
+                    echo -e " ${DIM}Path: ${DRIVE_TYPE_VAL}:tasin-backups/${SEL_DISPLAY}/${NC}"
+                    echo ""
+                    echo -n " Press Enter to continue... "
+                    read -r
+                    ;;
+                4)
+                    # Disconnect
+                    if [ -f "/root/.tasin/drive/${SEL_DISPLAY}.conf" ]; then
+                        rm -f "/root/.tasin/drive/${SEL_DISPLAY}.conf"
+                        echo -e " ${GREEN}✔ Drive disconnected for ${SEL_DISPLAY}${NC}"
+                        log_msg "Drive disconnected for ${SEL_DISPLAY}"
+                    else
+                        echo -e " ${YELLOW}No drive was connected for ${SEL_DISPLAY}${NC}"
+                    fi
+                    sleep 2
+                    ;;
+                0) continue ;;
+                *) ;;
+            esac
+        else
+            echo -e " ${RED}Invalid selection.${NC}"
+            sleep 1
+        fi
+    done
+}
+
+# ==================================================
 #       MIGRATION (v3.1 → v3.2: move to hidden .tasin/ directory)
 # ==================================================
 migrate_to_hidden_dir() {
@@ -3382,7 +3881,7 @@ while true; do
 
     # ─── Premium header with host status bar ───
     echo -e "${GOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.3${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${BRIGHT_ORANGE}◆${NC} ${WHITE}TASIN VPS CONTROL PANEL${NC}  ${DIM}v4.4${NC}   ${PREMIUM}PREMIUM++${NC}  ${GOLD}║${NC}"
     echo -e "${GOLD}╠═══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GOLD}║${NC}  ${DIM}HOST STATUS${NC}  CPU: ${LIME}${_host_cpu}%${NC}  RAM: ${LIME}${_host_mem_disp}${NC}(${_host_mem_pct}%)  UP: ${CYAN}${_host_up_str}${NC}  ${_net_status}  ${GOLD}║${NC}"
     echo -e "${GOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
@@ -3420,13 +3919,14 @@ while true; do
     # ─── Action menu (clean single-column layout, properly aligned) ───
     echo -e "  ${GREEN}┌─${NC} ${BOLD}CREATE & MANAGE${NC} ${GREEN}──────────────────────────┐${NC}"
     echo -e "  ${GREEN}│${NC}  ${GREEN}[N]${NC}  ${WHITE}Create New VM${NC}                          ${GREEN}│${NC}"
-    echo -e "  ${GREEN}│${NC}  ${ORANGE}[F]${NC}  ${WHITE}Fix Docker (OverlayFS)${NC}                  ${GREEN}│${NC}"
+    echo -e "  ${GREEN}│${NC}  ${ORANGE}[F]${NC}  ${WHITE}Fix Docker${NC}                              ${GREEN}│${NC}"
     echo -e "  ${GREEN}└──────────────────────────────────────────┘${NC}"
     echo -e ""
     echo -e "  ${PURPLE}┌─${NC} ${BOLD}PREMIUM TOOLS${NC} ${PURPLE}─────────────────────────┐${NC}"
     echo -e "  ${PURPLE}│${NC}  ${PREMIUM}[I]${NC}  ${WHITE}Show VM Info${NC}                         ${PURPLE}│${NC}"
     echo -e "  ${PURPLE}│${NC}  ${PREMIUM}[E]${NC}  ${WHITE}Edit Configuration${NC}                    ${PURPLE}│${NC}"
     echo -e "  ${PURPLE}│${NC}  ${PREMIUM}[P]${NC}  ${WHITE}Live Performance Monitor${NC}              ${PURPLE}│${NC}"
+    echo -e "  ${PURPLE}│${NC}  ${LIME}[B]${NC}  ${WHITE}Auto Backup Connecter${NC}                   ${PURPLE}│${NC}"
     echo -e "  ${PURPLE}└──────────────────────────────────────────┘${NC}"
     echo -e ""
     echo -e "  ${RED}┌─${NC} ${BOLD}SYSTEM${NC} ${RED}──────────────────────────────┐${NC}"
@@ -3434,7 +3934,7 @@ while true; do
     echo -e "  ${RED}└──────────────────────────────────────────┘${NC}"
     echo -e ""
     echo -e "  ${GOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -ne "  ${BRIGHT_ORANGE}▶${NC} ${YELLOW}Enter VM number or command${NC} ${DIM}[N/F/I/E/P/X]${NC}: "
+    echo -ne "  ${BRIGHT_ORANGE}▶${NC} ${YELLOW}Enter VM number or command${NC} ${DIM}[N/F/I/E/P/B/X]${NC}: "
     read -r CHOICE
 
 
@@ -3531,6 +4031,8 @@ while true; do
                 sleep 1
             fi
         fi
+    elif [[ "$CHOICE" == "b" || "$CHOICE" == "B" ]]; then
+        backup_connecter
     elif [[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -le "${#VMS[@]}" ] && [ "$CHOICE" -gt 0 ]; then
         INDEX=$((CHOICE-1))
         SELECTED_VM=${VMS[$INDEX]}
